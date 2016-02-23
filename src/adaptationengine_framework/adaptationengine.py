@@ -22,12 +22,13 @@ import sys
 import time
 
 import adaptationaction
-import event
-import dashboard
+import database
 import distributor
 import enactor
+import event
 import heatresourcehandler
 import mqhandler
+import output
 import pluginmanager
 import utils
 
@@ -42,27 +43,21 @@ class AdaptationEngine:
     compile the results, and apply those results to Openstack
     """
 
-    def __init__(self, config_file):
+    def __init__(self):
         """
-        Load configuration, create plugin and message queue managers,
-        and clear the dashboard database
+        Create plugin and message queue managers
         """
-        utils.load_config(config_file)
-
         self._plugin_manager = pluginmanager.PluginManager()
+        output.OUTPUT.info("Plugin manager started")
         self._mq_handler = mqhandler.MQHandler(msg_callback=self._on_message)
+        output.OUTPUT.info("Message Queue handler started")
         self._heat_resources = heatresourcehandler.HeatResourceHandler(
             mq_handler=self._mq_handler,
         )
+        output.OUTPUT.info("Heat resource handler started")
 
         _manager = multiprocessing.Manager()
         self._locked_stacks = _manager.list()
-
-        try:
-            dashboard.Dashboard.clear()
-        except Exception, err:
-            LOGGER.error('Exception clearing dashboard database')
-            LOGGER.exception(err)
 
     def setup(self):
         """Setup required message queue connections"""
@@ -96,6 +91,7 @@ class AdaptationEngine:
             elif 'id' in msg_json and len(msg_json) >= 4:
                 # assuredly an event
                 cw_event = event.Event(message)
+
                 if cw_event.stack_id not in self._locked_stacks:
                     self._locked_stacks.append(cw_event.stack_id)
                     try:
@@ -104,10 +100,6 @@ class AdaptationEngine:
                             stack_id=cw_event.stack_id
                         )
                         if aa_list:
-                            dashboard_post = dashboard.DashboardPost(
-                                event_name=cw_event.name,
-                                stack_id=cw_event.stack_id,
-                            )
                             heat_resource = self._heat_resources.get_resource(
                                 event_name=cw_event.name,
                                 stack_id=cw_event.stack_id
@@ -135,22 +127,6 @@ class AdaptationEngine:
                                     stack_id=cw_event.stack_id,
                                     adaptation_action=pass_action,
                                 )
-                                dashboard_post.add_engine_result(
-                                    name='Passthrough',
-                                    adaptation_action=pass_action,
-                                    weight=1,
-                                )
-                                dashboard_post.add_chosen_adaptation(
-                                    pass_action
-                                )
-                                try:
-                                    dashboard_post.post()
-                                except Exception, err:
-                                    LOGGER.error(
-                                        "Error posting to "
-                                        "adaptation engine dashboard"
-                                    )
-                                    LOGGER.error(str(err))
 
                                 self._unlock_stack(cw_event.stack_id)
                             else:
@@ -160,7 +136,6 @@ class AdaptationEngine:
                                     heat_resource=heat_resource,
                                     callback=self._on_distributor_results,
                                     plugin_manager=self._plugin_manager,
-                                    dashboard_post=dashboard_post
                                 )
                                 dist.start()
                         else:
@@ -183,6 +158,11 @@ class AdaptationEngine:
                             cw_event.stack_id
                         )
                     )
+
+                database.Database.log_event_received(
+                    stack_id=cw_event.stack_id,
+                    event=cw_event
+                )
             else:
                 raise ValueError('Message invalid')
         except ValueError, err:
@@ -205,7 +185,6 @@ class AdaptationEngine:
         initial_actions,
         heat_resource,
         results,
-        dashboard_post
     ):
         """
         Callback executed by the distributor when it has gotten results
@@ -236,27 +215,22 @@ class AdaptationEngine:
                     adaptationaction.AdaptationType.DeveloperAction
                 )
 
-            dashboard_post.add_chosen_adaptation(chosen_adaptation)
-
-            enactor.Enactor.enact(
-                event=event,
-                heat_resource=heat_resource,
-                stack_id=event.stack_id,
-                adaptation_action=chosen_adaptation,
-            )
+            try:
+                enactor.Enactor.enact(
+                    event=event,
+                    heat_resource=heat_resource,
+                    stack_id=event.stack_id,
+                    adaptation_action=chosen_adaptation,
+                )
+            except Exception, err:
+                LOGGER.error("Error enacting adaptation [{}]".format(err))
 
         except Exception, err:
             LOGGER.error(
                 "There was an exception handling distributor "
                 "results: [{}]".format(err)
             )
-            LOGGER.exception(err)
-
-        try:
-            dashboard_post.post()
-        except Exception, err:
-            LOGGER.error('Error posting to adaptation engine dashboard')
-            LOGGER.error(str(err))
+            #  LOGGER.exception(err)
 
         self._unlock_stack(event.stack_id)
 
@@ -295,7 +269,9 @@ def main():
     """Do the thing"""
     usage = "usage: %prog"
     description = "Adaptation Engine"
-    version = "%prog 0.8"
+    version = "%prog 0.8.3"
+
+    output.OUTPUT.info("Initialising...")
 
     opt_parser = optparse.OptionParser(
         usage=usage,
@@ -319,18 +295,43 @@ def main():
         dest="healthcheck",
         default=False
     )
+    opt_parser.add_option(
+        "--clear-db-log",
+        action="store_true",
+        help="Delete log entries in the database",
+        dest="clear_log",
+        default=False
+    )
+    opt_parser.add_option(
+        "--clear-db-config",
+        action="store_true",
+        help="Delete config stored in database",
+        dest="clear_cfg",
+        default=False
+    )
 
     (options, args) = opt_parser.parse_args()
 
-    daemon = AdaptationEngine(config_file=options.cfg_file)
+    utils.load_config(
+        configfile=options.cfg_file,
+        clear_db_config=options.clear_cfg
+    )
+
+    if options.clear_log:
+        database.Database.delete_db_log()
+
+    daemon = AdaptationEngine()
 
     def time_to_die(signal, frame):
         """Kill the adaptation engine processes"""
         LOGGER.info("Passing along SIGTERM")
         daemon.stop()
         sys.exit(0)
+        output.OUTPUT.info("Done.")
 
     signal.signal(signal.SIGTERM, time_to_die)
+
+    output.OUTPUT.info("Adaptation Engine started (ctrl+c to quit)...")
 
     try:
         if options.healthcheck:

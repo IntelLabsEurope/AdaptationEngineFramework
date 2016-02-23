@@ -85,7 +85,7 @@ class MQHandler:
         Publish supplied message with specified resource id to the
         custom heat resource listener
         """
-        LOGGER.info(
+        LOGGER.debug(
             'sending message [{0}] to [{1}]'.format(message, resource_id)
         )
         self._heat_publisher.publish(message=message, resource_id=resource_id)
@@ -93,7 +93,7 @@ class MQHandler:
     def healthcheck(self):
         """Execute message queue healthcheck connection"""
         try:
-            LOGGER.info('Healthcheck started')
+            LOGGER.debug('Healthcheck started')
 
             mq_tester = rabbitmq.RabbitHealthCheck(
                 host=cfg.mq__host,
@@ -108,9 +108,9 @@ class MQHandler:
             while mq_tester.is_alive():
                 pass
 
-            LOGGER.info('Healthcheck ends')
+            LOGGER.debug('Healthcheck ends')
         except Exception, err:
-            LOGGER.info('Healthcheck failed: ' + str(err))
+            LOGGER.debug('Healthcheck failed: ' + str(err))
             HEALTHLOGGER.info("[FAIL] " + str(err))
 
     def run(self):

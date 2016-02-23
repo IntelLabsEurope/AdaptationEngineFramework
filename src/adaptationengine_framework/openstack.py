@@ -85,31 +85,11 @@ class OpenStackClients:
 
     @staticmethod
     def get_heat_client(keystone_client):
-        """Find the heat endpoing and return a heat client"""
+        """Generate a heat client"""
         LOGGER.debug("Generating heat client")
-        heat_service_id = None
-        heat_endpoint = None
-
-        for y in keystone_client.services.list():
-            if y.name == 'heat':
-                heat_service_id = y.id
-
-        for z in keystone_client.endpoints.list():
-            if z.service_id == heat_service_id:
-                heat_endpoint = z.internalurl
-
-        # openstack version difference #37891
-        try:
-            heat_endpoint = heat_endpoint.replace(
-                '%(tenant_id)s',
-                keystone_client.project_id
-            )
-            heat_endpoint = heat_endpoint.replace(
-                '$(tenant_id)s',
-                keystone_client.project_id
-            )
-        except AttributeError:
-            raise LookupError('No Heat endpoint found in Keystone')
+        heat_endpoint = OpenStackClients._find_endpoint(
+            keystone_client, 'heat'
+        )
 
         heat_client = heatc.Client(
             "1",  # HEAT_API_VERSION
@@ -119,6 +99,51 @@ class OpenStackClients:
         LOGGER.debug("Generated heat client")
 
         return heat_client
+
+    @staticmethod
+    def _find_endpoint(keystone_client, service):
+        """Return the endpoint url for a named openstack service"""
+        if keystone_client is None:
+            LOGGER.error("Invalid keystone client")
+            return None
+
+        LOGGER.debug(
+            "Looking for endpoint for service [{}]".format(service)
+        )
+        endpoint = None
+        service_id = None
+        for y in keystone_client.services.list():
+            if y.name == service:
+                service_id = y.id
+
+        for z in keystone_client.endpoints.list():
+            if z.service_id == service_id:
+                endpoint = z.internalurl
+
+        LOGGER.debug("Apparent endpoint url [{}]".format(endpoint))
+
+        # openstack undocumented version difference #37891
+        try:
+            endpoint = endpoint.replace(
+                '%(tenant_id)s',
+                keystone_client.project_id
+            )
+            endpoint = endpoint.replace(
+                '$(tenant_id)s',
+                keystone_client.project_id
+            )
+        except AttributeError:
+            LOGGER.error(
+                "No endpoint found for service [{}] in Keystone".format(
+                    service
+                )
+            )
+
+        LOGGER.debug(
+            "Endpoint url with tenant id [{}]".format(endpoint)
+        )
+
+        return endpoint
 
     @staticmethod
     def get_heat_client_for_stack(admin_keystone_client, stack_id):

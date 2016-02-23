@@ -19,6 +19,7 @@ import threading
 
 import configuration as cfg
 import consolidator
+import database
 import openstack
 
 
@@ -38,7 +39,6 @@ class Distributor(threading.Thread):
         heat_resource,
         callback,
         plugin_manager,
-        dashboard_post
     ):
         """Create the thread, openstack interface, and some additional setup"""
         LOGGER.info(
@@ -50,7 +50,6 @@ class Distributor(threading.Thread):
         self._plugin_manager = plugin_manager
         self._round_results = self._manager.dict()
         self._heat_resource = heat_resource
-        self._dashboard_post = dashboard_post
 
         # load initial adaptation list
         self._initial_actions = initial_action_list
@@ -116,11 +115,14 @@ class Distributor(threading.Thread):
                 )
                 for key, results in self._round_results.items():
                     weight = plugin_weights.get(key, -1)
-                    self._dashboard_post.add_engine_result(
-                        name=key,
-                        adaptation_action=results[0],
-                        weight=weight,
+                    database.Database.log_plugin_result(
+                        stack_id=self._cw_event.stack_id,
+                        plugin_name=key,
+                        plugin_weight=weight,
+                        input_actions=consolidated_results,
+                        output_actions=results,
                     )
+
                 LOGGER.info('calling consolidator')
                 consolidated_results = consolidator.Consolidator.consolidate(
                     self._cw_event,
@@ -139,7 +141,6 @@ class Distributor(threading.Thread):
                 self._initial_actions,
                 self._heat_resource,
                 consolidated_results,
-                self._dashboard_post
             )
         except Exception, err:
             LOGGER.error('Distributor error')

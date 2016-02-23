@@ -22,17 +22,16 @@ import setuptools
 ez_setup.use_setuptools()
 
 setuptools.setup(
-    name="adaptation-engine",
-    version="0.8",
-    description="Adaptation Engine",
+    name="adaptation-engine-framework",
+    version="0.8.3",
+    description="Adaptation Engine framework",
     author="Intel - Daniel Doyle",
     author_email="danielx.doyle@intel.com",
     download_url="",
-    keywords=["adaptation", "engine"],
+    keywords=["adaptation", "engine", "framework"],
     license='Apache License 2.0',
     install_requires=[
         'pika',
-        'kombu',
         'pymongo',
         'jpype1',
         'requests',
@@ -47,10 +46,21 @@ setuptools.setup(
     },
     tests_require=[
         'mock',
+        'nose',
+        'coverage',
+        'pep8',
+        'pylint'
     ],
     entry_points={
         'console_scripts': [
-            'adaptation=adaptationengine.adaptationengine:main'
+            (
+                'adaptationengine='
+                'adaptationengine_framework.adaptationengine:main'
+            ),
+            (
+                'adaptationengine-plugintester='
+                'adaptationengine_plugintester.harness:main'
+            ),
         ],
     }
 )

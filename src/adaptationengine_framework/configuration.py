@@ -15,10 +15,11 @@ limitations under the License.
 """
 
 
-dashboard__host = None
-dashboard__port = None
-dashboard__database = None
-dashboard__collection = None
+database__host = None
+database__port = None
+database__database_name = None
+database__collection_config = None
+database__collection_log = None
 
 mq__host = None
 mq__port = None

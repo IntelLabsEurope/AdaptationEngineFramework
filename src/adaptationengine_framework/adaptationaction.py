@@ -108,6 +108,17 @@ class AdaptationAction:
             )
         return output
 
+    def to_dict(self):
+        """return a json-compatible dictionary representation of the action"""
+        output = {
+            "type": AdaptationType.get_string(self.adaptation_type),
+            "target": self.target,
+            "destination": self.destination,
+            "scale_value": self.scale_value,
+            "score": self.score
+        }
+        return output
+
     def generate_adaptation_request(self, adaptation_event):
         """
         Return an adaptation-event format json string representing this action

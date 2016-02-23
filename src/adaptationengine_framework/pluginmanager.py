@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import imp
 import logging
 import os
 import threading
@@ -42,49 +43,98 @@ class PluginManager:
         self._plugin__weightings = cfg.plugin__weightings
 
         # Java setup
-        self._java_plugins = {}
+        self._plugins = {}
         self._jvm_lock = threading.Lock()
-        self.jvm_needed = True
+        self.jvm_needed = False
         self.jvm_classpath = "{}/AdaptationEngine.jar".format(cfg.plugin_java)
-
-        # Find plugins
         self._scan_for_java_plugins()
 
-        # Start JVM if needed
         if self.jvm_needed:
             self._start_jvm()
+
+        # Python setup
+        self._scan_for_python_plugins()
 
     def _start_jvm(self):
         """
         Start JVM with necessary flags and classpath including all
         discovered plugins, if not already started
         """
-        if not isJVMStarted() and self.jvm_needed:
-            LOGGER.info("JVM is not started. Starting...")
-            flag_list = [
-                '-Djava.class.path={}'.format(self.jvm_classpath)
-            ]
-            startJVM(
-                getDefaultJVMPath(),
-                *flag_list
-            )
-            LOGGER.info("JVM started")
-        else:
-            LOGGER.warn("JVM is already started or not needed")
+        try:
+            if not isJVMStarted() and self.jvm_needed:
+                LOGGER.info("JVM is not started. Starting...")
+                flag_list = [
+                    '-Djava.class.path={}'.format(self.jvm_classpath)
+                ]
+                startJVM(
+                    getDefaultJVMPath(),
+                    *flag_list
+                )
+                LOGGER.info("JVM started")
+            else:
+                LOGGER.warn("JVM is already started or not needed")
+        except OSError, err:
+            raise Exception("Could not find/start JVM! [{}]".format(err))
 
-    def get(self, plugin_list):
+    def get(self, plugin_name_list):
         """
         Get a new instance of all the plugins we have
         """
-        LOGGER.info('Getting plugins {}'.format(plugin_list))
+        LOGGER.info('Getting plugins {}'.format(plugin_name_list))
         plugins = []
-        for name in plugin_list:
-            generator = self._java_plugins.get(name)
-            plugins.append(
-                generator.next()
-            )
+        for name in plugin_name_list:
+            generator = self._plugins.get(name, None)
+            plugins.append(generator.next())
         LOGGER.info('Returning plugins {}'.format(plugins))
         return plugins
+
+    def _scan_for_python_plugins(self):
+        plugin_dir = cfg.plugin_python
+        try:
+            for dir_name in os.listdir(plugin_dir):
+                full_dir_path = os.path.join(plugin_dir, dir_name)
+                if os.path.isdir(full_dir_path):
+                    # get a full path to the plugin file
+                    full_module_path = os.path.join(
+                        full_dir_path, '{}.py'.format(dir_name)
+                    )
+                    plugin_uuid = uuid.uuid4().hex
+                    if os.path.isfile(full_module_path):
+                        self._plugins[dir_name] = (
+                            plugins.PythonPluginGenerator(
+                                file_path=full_module_path,
+                                info=imp.find_module(
+                                    '{}'.format(dir_name), [full_dir_path]
+                                ),
+                                name=dir_name,
+                                uuid=plugin_uuid,
+                                weight=1
+                            )
+                        )
+                        LOGGER.info(
+                            "Using a plugin called [{}] in "
+                            "file [{}] with uuid [{}]".format(
+                                dir_name,
+                                full_module_path,
+                                plugin_uuid,
+                                # TODO: will need to tie this to
+                                # weightings later
+                            )
+                        )
+                    else:
+                        raise OSError(
+                            "Could not add a plugin called [{}] "
+                            "in file [{}]. Doesn't exist!".format(
+                                dir_name,
+                                full_module_path,
+                            )
+                        )
+        except OSError:
+            LOGGER.warn(
+                "Specified Python plugin directory doesn't "
+                "seem to exist!"
+                " [{}]".format(plugin_dir)
+            )
 
     def _scan_for_java_plugins(self):
         """
@@ -116,7 +166,7 @@ class PluginManager:
                                         full_dir_path, file
                                     )
                                 )
-                        self._java_plugins[dir_name] = (
+                        self._plugins[dir_name] = (
                             plugins.JavaPluginGenerator(
                                 file_path=full_jar_path,
                                 lock=self._jvm_lock,

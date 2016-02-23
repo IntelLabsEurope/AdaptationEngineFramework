@@ -21,6 +21,7 @@ import yaml
 
 import adaptationaction
 import configuration as cfg
+import database
 import mqhandler
 import openstack
 
@@ -292,6 +293,12 @@ class Enactor:
             app_feedback_event_payload
         )
 
+        database.Database.log_adaptation_started(
+            stack_id=stack_id,
+            event_name=event.name,
+            adaptation=adaptation_action
+        )
+
         # ENACT
         LOGGER.info("Openstack is doing things now....")
         if (
@@ -496,6 +503,12 @@ class Enactor:
                 event.name,
                 app_feedback_event_payload
             )
+
+            database.Database.log_adaptation_completed(
+                stack_id=stack_id,
+                event_name=event.name,
+                adaptation=adaptation_action
+            )
         else:
             app_feedback_broker.publish_app_feedback_failed_event(
                 cfg.app_feedback__exchange,
@@ -503,6 +516,12 @@ class Enactor:
                 stack_id,
                 event.name,
                 app_feedback_event_payload
+            )
+
+            database.Database.log_adaptation_failed(
+                stack_id=stack_id,
+                event_name=event.name,
+                adaptation=adaptation_action
             )
 
         # Disconnect from Rabbit

@@ -17,7 +17,9 @@ import json
 import logging
 
 import adaptationaction
+import database
 import openstack
+import output
 
 
 LOGGER = logging.getLogger('syslog')
@@ -53,6 +55,7 @@ class HeatResourceHandler:
         templates to recover previous stacks
         """
         LOGGER.info("Trying to recover stack / resource state...")
+        output.OUTPUT.info("Trying to recover stack / resource state...")
 
         try:
             ks_admin_client = openstack.OpenStackClients.get_keystone_client()
@@ -60,6 +63,7 @@ class HeatResourceHandler:
             LOGGER.warn(
                 'Could not connect to openstack to recover state'
             )
+            output.OUTPUT.error("...could not connect to openstack")
         else:
             for tenant in ks_admin_client.tenants.list():
                 LOGGER.info("Trying tenant {}".format(tenant.name))
@@ -130,6 +134,8 @@ class HeatResourceHandler:
                     LOGGER.info(
                         "Recovered state for tenant {}".format(tenant.name)
                     )
+
+            output.OUTPUT.info("Recovered state")
 
         LOGGER.info(
             'Current active resources: {0}'.format(self._active_resources)
@@ -204,6 +210,15 @@ class HeatResourceHandler:
                     # 'grouping': grouping
                 }
 
+                database.Database.log_adaptation_response_created(
+                    stack_id=stack_id,
+                    event_name=heat_msg_data['name'],
+                    allowed_actions=actions,
+                    horizontal_scale_out=heat_msg_data.get(
+                        'horizontal_scale_out', {}
+                    )
+                )
+
                 self._mq_handler.publish_to_heat_resource(
                     resource_id=resource_id,
                     message=json.dumps({'response': resource_id})
@@ -216,7 +231,11 @@ class HeatResourceHandler:
                 )
 
             elif heat_msg_type == 'heat_delete':
+                stack_id = None
+                event_name = None
                 try:
+                    stack_id = self._active_resources[resource_id]['stack_id']
+                    event_name = self._active_resources[resource_id]['event']
                     del self._active_resources[resource_id]
                 except KeyError, err:
                     LOGGER.info(
@@ -229,6 +248,12 @@ class HeatResourceHandler:
                     resource_id=resource_id,
                     message=json.dumps({'response': True})
                 )
+
+                if stack_id and event_name:
+                    database.Database.log_adaptation_response_deleted(
+                        stack_id,
+                        event_name
+                    )
 
             elif heat_msg_type == 'heat_query':
                 output = []
@@ -261,8 +286,8 @@ class HeatResourceHandler:
             else:
                 raise Exception('invalid message: unrecognised heat type')
 
-            LOGGER.info('Current active resources: {0}'.format(
-                self._active_resources)
+            LOGGER.info(
+                'Current active resources: {0}'.format(self._active_resources)
             )
 
         except Exception, err:

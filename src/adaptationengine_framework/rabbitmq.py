@@ -55,7 +55,7 @@ class RabbitMQ(threading.Thread):
             credentials=credentials
         )
 
-        LOGGER.info(
+        LOGGER.debug(
             'RabbitMQ connection to {0}:{1} initialised'.format(host, port)
         )
 
@@ -126,7 +126,7 @@ class RabbitMQ(threading.Thread):
 
         Add channel close callback, declare exchange
         """
-        LOGGER.info('Channel opened')
+        LOGGER.debug('Channel opened')
         self._CHANNEL = channel
         self._CHANNEL.add_on_close_callback(self._on_channel_closed)
         self._CHANNEL.exchange_declare(
@@ -151,7 +151,7 @@ class RabbitMQ(threading.Thread):
         """
         Callback executed when the exchange is delared
         """
-        LOGGER.info('Exchange declared')
+        LOGGER.debug('Exchange declared')
         pass
 
     def run(self):
@@ -209,7 +209,7 @@ class RabbitConsumer(RabbitMQ):
 
         Declare queue, either with an auto-generated name, or a supplied one
         """
-        LOGGER.info('Exchange declared')
+        LOGGER.debug('Exchange declared')
         if not self._QUEUE:
             self._CHANNEL.queue_declare(
                 self._on_queue_declared,
@@ -228,7 +228,7 @@ class RabbitConsumer(RabbitMQ):
 
         Bind queue to channel
         """
-        LOGGER.info('Queue declared')
+        LOGGER.debug('Queue declared')
         self._QUEUE = response.method.queue
         self._CHANNEL.queue_bind(
             self._on_queue_bound,
@@ -243,7 +243,7 @@ class RabbitConsumer(RabbitMQ):
 
         Create a consumer and start it consuming
         """
-        LOGGER.info('Queue bound')
+        LOGGER.debug('Queue bound')
         self._CONSUMER = self._CHANNEL.basic_consume(
             self._on_message_received,
             self._QUEUE,
@@ -257,7 +257,7 @@ class RabbitConsumer(RabbitMQ):
         Pass message to the callback function specified on initialisation, if
         there was one
         """
-        LOGGER.info('Message received')
+        LOGGER.debug('Message received')
         try:
             if self._MSG_CALLBACK is not None:
                 self._MSG_CALLBACK(body)
@@ -290,8 +290,8 @@ class RabbitPublisher(RabbitMQ):
         Publish a provided message, optionally appending a resource_id
         to the existing configured routing key
         """
-        LOGGER.info('Publishing a message...')
-        LOGGER.info('existing key [{0}]'.format(self._KEY))
+        LOGGER.debug('Publishing a message...')
+        LOGGER.debug('existing key [{0}]'.format(self._KEY))
         if resource_id:
             try:
                 respond_key = self._KEY.format(resource_id=resource_id)
@@ -303,8 +303,8 @@ class RabbitPublisher(RabbitMQ):
         else:
             respond_key = self._KEY
 
-        LOGGER.info('response key [{0}]'.format(respond_key))
-        LOGGER.info("response: {0}".format(message))
+        LOGGER.debug('response key [{0}]'.format(respond_key))
+        LOGGER.debug("response: {0}".format(message))
 
         try:
             self._CHANNEL.basic_publish(
@@ -317,7 +317,7 @@ class RabbitPublisher(RabbitMQ):
                 "Exception while publishing message: [{0}]".format(err)
             )
         else:
-            LOGGER.info('Message published')
+            LOGGER.debug('Message published')
 
 
 class RabbitHealthCheck(RabbitMQ):

@@ -13,6 +13,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 """
+import imp
 import json
 import logging
 import requests
@@ -33,66 +34,59 @@ class OpenStackAPI:
     without knowing where they are
     """
 
-    def __init__(self):
+    def __init__(self, plugin_name):
         """Connect to keystone and get authentication for later queries"""
-        LOGGER.info("Getting keystone auth token for REST API")
-        self._keystone = openstack.OpenStackClients.get_keystone_client()
-
-        self._token = self._keystone.auth_ref['token']['id']
-        LOGGER.info("Got auth token")
-        self._tenant_id = self._keystone.auth_ref['token']['tenant']['id']
-        LOGGER.info("Got tenant id")
-        self._headers = {"X-Auth-Token": self._token}
-
-    def _find_endpoint(self, keystone_client, service):
-        """Return the endpoint url for a named openstack service"""
-        LOGGER.info("Looking for endpoint for service [{}]".format(service))
-        endpoint = None
-        service_id = None
-        for y in keystone_client.services.list():
-            if y.name == service:
-                service_id = y.id
-
-        for z in keystone_client.endpoints.list():
-            if z.service_id == service_id:
-                endpoint = z.internalurl
-
-        LOGGER.info("Apparent endpoint url [{}]".format(endpoint))
-        # openstack undocumented version difference #37891
+        self._plugin_name = plugin_name
+        LOGGER.debug(
+            "[{}] Getting keystone auth token for REST API".format(
+                self._plugin_name
+            )
+        )
         try:
-            endpoint = endpoint.replace(
-                '%(tenant_id)s',
-                keystone_client.project_id
-            )
-            endpoint = endpoint.replace(
-                '$(tenant_id)s',
-                keystone_client.project_id
-            )
-        except AttributeError:
+            self._keystone = openstack.OpenStackClients.get_keystone_client()
+
+            self._token = self._keystone.auth_ref['token']['id']
+            LOGGER.debug("[{}] Got auth token".format(self._plugin_name))
+            self._tenant_id = self._keystone.auth_ref['token']['tenant']['id']
+            LOGGER.debug("[{}] Got tenant id".format(self._plugin_name))
+            self._headers = {"X-Auth-Token": self._token}
+        except Exception, err:
             LOGGER.error(
-                'No endpoint found for service [{}] in Keystone'.format(
-                    service
+                "[{}] Could not get keystone client [{}]".format(
+                    self._plugin_name, err
                 )
             )
-
-        LOGGER.info("Endpoint url with tenant id [{}]".format(endpoint))
-
-        return endpoint
+            self._keystone = None
+            self._token = None
+            self._headers = None
 
     def get(self, url):
         """Return the results (JSON) of a GET request to url"""
-        LOGGER.info("Plugin requested openstack api url: {}".format(url))
-        if not self._endpoint:
-            LOGGER.error("No endpoint for this API call")
+        LOGGER.debug(
+            "[{}] Plugin requested openstack api url: {}".format(
+                self._plugin_name, url
+            )
+        )
+        if self._endpoint is None:
+            LOGGER.error(
+                "[{}] No endpoint for this API call".format(self._plugin_name)
+            )
             return None
+
         try:
             final_url = self._endpoint + url
             r = requests.get(final_url, headers=self._headers)
-            LOGGER.info("API resonse: {}".format(r))
-            LOGGER.info("Response body: {}".format(r.text))
+            LOGGER.debug("[{}] API resonse: {}".format(self._plugin_name, r))
+            LOGGER.debug(
+                "[{}] Response body: {}".format(self._plugin_name, r.text)
+            )
             return r.text
         except Exception, err:
-            LOGGER.error("Exception while querying openstack api")
+            LOGGER.error(
+                "[{}] Exception while querying openstack api".format(
+                    self._plugin_name
+                )
+            )
             LOGGER.exception(err)
             return None
 
@@ -100,68 +94,124 @@ class OpenStackAPI:
 class Metrics(OpenStackAPI):
     """Provide access to OpenStack metric api (ceilometer)"""
 
-    def __init__(self):
+    def __init__(self, plugin_name="NoName"):
         """Find endpoint url"""
-        OpenStackAPI.__init__(self)
-        self._endpoint = self._find_endpoint(self._keystone, 'ceilometer')
-        LOGGER.info("Found endpoint {}".format(self._endpoint))
+        OpenStackAPI.__init__(self, plugin_name)
+        self._endpoint = openstack.OpenStackClients._find_endpoint(
+            self._keystone, 'ceilometer'
+        )
 
 
 class Compute(OpenStackAPI):
     """Provide access to OpenStack compute api (nova)"""
 
-    def __init__(self):
+    def __init__(self, plugin_name="NoName"):
         """Find endpoint url"""
-        OpenStackAPI.__init__(self)
-        self._endpoint = self._find_endpoint(self._keystone, 'nova')
-        LOGGER.info("Found endpoint {}".format(self._endpoint))
+        OpenStackAPI.__init__(self, plugin_name)
+        self._endpoint = openstack.OpenStackClients._find_endpoint(
+            self._keystone, 'nova'
+        )
 
 
 class Orchestration(OpenStackAPI):
     """Provide access to OpenStack orchestration api (heat)"""
 
-    def __init__(self):
+    def __init__(self, plugin_name="NoName"):
         """Find endpoint url"""
-        OpenStackAPI.__init__(self)
-        self._endpoint = self._find_endpoint(self._keystone, 'heat')
-        LOGGER.info("Found endpoint {}".format(self._endpoint))
+        OpenStackAPI.__init__(self, plugin_name)
+        self._endpoint = openstack.OpenStackClients._find_endpoint(
+            self._keystone, 'heat'
+        )
 
 
-class JLogger:
+class PluginLogger:
 
-    def __init__(self):
-        pass
+    def __init__(self, plugin_name="NoName"):
+        """Name the plugin that will be using the logger"""
+        self._name = plugin_name
 
     def log(self, message):
         """Allow a plugin to log to the usual adaptation engine log file"""
-        LOGGER.info("JAVA LOG: {}".format(message))
+        LOGGER.info("[{}] LOG: {}".format(self._name, message))
 
 
 class Plugin(threading.Thread):
 
     def __init__(self, file_path, name, uuid, weight):
-        LOGGER.info("[{}] Plugin init".format(name))
+        LOGGER.debug("[{}] Plugin init".format(name))
 
         self.plugin_name = name
         self.file_path = file_path
         self._uuid = uuid
         self.weight = weight
 
-        LOGGER.info("[{}] Plugin init complete".format(name))
+        LOGGER.debug("[{}] Plugin init complete".format(name))
 
         threading.Thread.__init__(self)
 
     def _log_info(self, msg):
         LOGGER.info("[{}] {}".format(self.plugin_name, msg))
 
+    def _log_debug(self, msg):
+        LOGGER.debug("[{}] {}".format(self.plugin_name, msg))
+
     def _log_error(self, msg):
         LOGGER.error("[{}] {}".format(self.plugin_name, msg))
 
 
-class PyPlugin(Plugin):
+class PythonPlugin(Plugin):
+
+    def __init__(self, file_path, info, name, uuid, weight):
+        self._event = None
+        self._initial_actions = None
+        self._results = None
+        self._plugin = imp.load_module('{}.py'.format(name), *info)
+
+        Plugin.__init__(self, file_path, name, uuid, weight)
+
+        self._log_debug(
+            "initialising plugin [{}] [{}]".format(file_path, info)
+        )
+
+    def setup(self, event, initial_actions, results):
+        self._event = event
+        self._initial_actions = initial_actions
+        self._results = results
 
     def run(self):
-        pass
+        api_metrics = Metrics(self.plugin_name)
+        api_compute = Compute(self.plugin_name)
+        api_orchestration = Orchestration(self.plugin_name)
+        plugin_logger = PluginLogger(self.plugin_name)
+
+        self._log_debug("Executing Python plugin")
+        self._results[self.plugin_name] = self._plugin.run(
+            self._event,
+            self._initial_actions,
+            api_metrics,
+            api_compute,
+            api_orchestration,
+            plugin_logger
+        )
+
+
+class PythonPluginGenerator:
+
+    def __init__(self, file_path, info, name, uuid, weight):
+        self._file_path = file_path
+        self._info = info
+        self._name = name
+        self._uuid = uuid
+        self._weight = weight
+
+    def next(self):
+        return PythonPlugin(
+            self._file_path,
+            self._info,
+            self._name,
+            self._uuid,
+            self._weight
+        )
 
 
 class JavaPluginGenerator:
@@ -215,7 +265,7 @@ class JavaPlugin(Plugin):
 
         # interfaces
         try:
-            metrics = Metrics()
+            metrics = Metrics(self.plugin_name)
             j_metrics = jpype.JProxy(
                 "intel.adaptationengine.Metrics",
                 inst=metrics
@@ -225,7 +275,7 @@ class JavaPlugin(Plugin):
             LOGGER.exception(err)
 
         try:
-            compute = Compute()
+            compute = Compute(self.plugin_name)
             j_compute = jpype.JProxy(
                 "intel.adaptationengine.Compute",
                 inst=compute
@@ -235,7 +285,7 @@ class JavaPlugin(Plugin):
             LOGGER.exception(err)
 
         try:
-            orchestration = Orchestration()
+            orchestration = Orchestration(self.plugin_name)
             j_orchestration = jpype.JProxy(
                 "intel.adaptationengine.Orchestration",
                 inst=orchestration
@@ -254,7 +304,7 @@ class JavaPlugin(Plugin):
 
         # log
         self._log_info("Initialising Logging interfaces")
-        the_logging = JLogger()
+        the_logging = PluginLogger(self.plugin_name)
         j_logger = jpype.JProxy(
             "intel.adaptationengine.Logger",
             inst=the_logging

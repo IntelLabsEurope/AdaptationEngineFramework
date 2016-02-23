@@ -15,6 +15,7 @@ limitations under the License.
 """
 import logging
 
+import database
 
 LOGGER = logging.getLogger('syslog')
 
@@ -27,7 +28,7 @@ class Consolidator:
     @staticmethod
     def consolidate(event, first_initial_actions, round_results):
         """
-        Consolidate
+        Consolidate??
         """
         LOGGER.info(
             'Consolidator init: event name [{0}]'.format(event.name)
@@ -41,5 +42,11 @@ class Consolidator:
             LOGGER.info("Output key [{}] value [{}]".format(key, value))
             output = output + value
         LOGGER.info('Consolidator results: {}'.format(output))
+
+        database.Database.log_consolidation(
+            stack_id=event.stack_id,
+            input_results=round_results,
+            output_results=output
+        )
 
         return output

@@ -21,6 +21,7 @@ import yaml
 from pkg_resources import resource_string
 
 import configuration as cfg
+import database
 
 
 def generic_logging(logger, handler, format_string, level):
@@ -40,10 +41,10 @@ def generic_logging(logger, handler, format_string, level):
 
 def syslog_logging(name='adaptation-engine', level=logging.DEBUG):
     """Set up logging to syslog and return a logger object"""
-    # handler = logging.handlers.SysLogHandler(address='/dev/log')
-    handler = logging.handlers.TimedRotatingFileHandler(
-        filename='/tmp/adaptation_engine.log', when='midnight', backupCount=7
-    )
+    handler = logging.handlers.SysLogHandler(address='/dev/log')
+    # handler = logging.handlers.TimedRotatingFileHandler(
+    #    filename='/tmp/adaptation_engine.log', when='midnight', backupCount=7
+    # )
     return generic_logging(
         'syslog',
         handler,
@@ -73,7 +74,7 @@ def std_logging():
     return generic_logging('stdout', handler, '%(message)s', logging.INFO)
 
 
-def load_config(configfile):
+def load_config(configfile, clear_db_config):
     """
     Load a YAML config file and parse it into the
     configuration module for global access
@@ -93,10 +94,11 @@ def load_config(configfile):
 
         yaml_config = yaml.load(cfg_string)
 
-        cfg.dashboard__host = yaml_config['adaptation_engine']['dashboard']['host']
-        cfg.dashboard__port = yaml_config['adaptation_engine']['dashboard']['port']
-        cfg.dashboard__database = yaml_config['adaptation_engine']['dashboard']['database']
-        cfg.dashboard__collection = yaml_config['adaptation_engine']['dashboard']['collection']
+        cfg.database__host = yaml_config['adaptation_engine']['database']['host']
+        cfg.database__port = yaml_config['adaptation_engine']['database']['port']
+        cfg.database__database_name = yaml_config['adaptation_engine']['database']['database']
+        cfg.database__collection_config = yaml_config['adaptation_engine']['database']['collections']['config']
+        cfg.database__collection_log = yaml_config['adaptation_engine']['database']['collections']['log']
 
         cfg.mq__host = yaml_config['adaptation_engine']['mq_broker']['host']
         cfg.mq__port = yaml_config['adaptation_engine']['mq_broker']['port']
@@ -145,3 +147,8 @@ def load_config(configfile):
             err
         )
         sys.exit(1)
+
+    if clear_db_config:
+        database.Database.delete_db_cfg()
+
+    database.Database.load_config()
