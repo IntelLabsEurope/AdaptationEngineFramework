@@ -27,7 +27,7 @@ import adaptationengine_framework.adaptationaction as ae_action
 import adaptationengine_framework.event as ae_event
 import adaptationengine_framework.output as output
 
-import plugins
+import adaptationengine_plugintester.plugins as plugins
 
 
 def generate_initial_actions(actions_json):
@@ -133,9 +133,9 @@ def main():
 
     if len(args) == 3:
         if (
-            not os.path.isfile(args[0]) and
-            not os.path.isfile(args[1]) and
-            not os.path.isfile(args[2])
+                not os.path.isfile(args[0]) and
+                not os.path.isfile(args[1]) and
+                not os.path.isfile(args[2])
         ):
             raise Exception('You should probably correct a file name')
 
@@ -157,7 +157,7 @@ def main():
             even_more_jars = []
             print str(options.dependency_dir)
             for (dirpath, dirnames, filenames) in os.walk(
-                options.dependency_dir
+                    options.dependency_dir
             ):
                 for probable_jar in filenames:
                     (head, tail) = os.path.split(probable_jar)
@@ -194,7 +194,7 @@ def main():
             except Exception, err:
                 output.OUTPUT.error(err)
         else:
-            output.OUTPUT.warn("JVM is already started")
+            output.OUTPUT.error("JVM is already started")
 
         # start plugin
         plugin_name = args[0]

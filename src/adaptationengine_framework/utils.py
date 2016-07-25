@@ -15,36 +15,32 @@ limitations under the License.
 """
 import logging
 import logging.config
+import pkg_resources
 import sys
 import yaml
 
-from pkg_resources import resource_string
-
-import configuration as cfg
-import database
+import adaptationengine_framework.configuration as cfg
+import adaptationengine_framework.database as database
 
 
 def generic_logging(logger, handler, format_string, level):
     """Create a logger for this handler and return it"""
     loggo = logging.getLogger(logger)
     loggo.setLevel(level)
-    h = handler
-    h.setLevel(level)
+    our_handler = handler
+    our_handler.setLevel(level)
     if isinstance(format_string, tuple):
         formatter = logging.Formatter(format_string[0], format_string[1])
     else:
         formatter = logging.Formatter(format_string)
-    h.setFormatter(formatter)
-    loggo.addHandler(h)
+    our_handler.setFormatter(formatter)
+    loggo.addHandler(our_handler)
     return loggo
 
 
-def syslog_logging(name='adaptation-engine', level=logging.DEBUG):
+def syslog_logging(name='adaptationengine', level=logging.DEBUG):
     """Set up logging to syslog and return a logger object"""
     handler = logging.handlers.SysLogHandler(address='/dev/log')
-    # handler = logging.handlers.TimedRotatingFileHandler(
-    #    filename='/tmp/adaptation_engine.log', when='midnight', backupCount=7
-    # )
     return generic_logging(
         'syslog',
         handler,
@@ -83,7 +79,9 @@ def load_config(configfile, clear_db_config):
 
     try:
         if configfile is None:
-            cfg_string = resource_string(__name__, 'default-config.yaml')
+            cfg_string = pkg_resources.resource_string(
+                __name__, 'default-config.yaml'
+            )
             configfile = 'default'
         else:
             try:
@@ -94,54 +92,82 @@ def load_config(configfile, clear_db_config):
 
         yaml_config = yaml.load(cfg_string)
 
-        cfg.database__host = yaml_config['adaptation_engine']['database']['host']
-        cfg.database__port = yaml_config['adaptation_engine']['database']['port']
-        cfg.database__database_name = yaml_config['adaptation_engine']['database']['database']
-        cfg.database__collection_config = yaml_config['adaptation_engine']['database']['collections']['config']
-        cfg.database__collection_log = yaml_config['adaptation_engine']['database']['collections']['log']
+        # webbo
+        yml_webbo = yaml_config['adaptation_engine'].get('webbo', {})
+        cfg.webbo__port = yml_webbo.get('port', 8888)
 
-        cfg.mq__host = yaml_config['adaptation_engine']['mq_broker']['host']
-        cfg.mq__port = yaml_config['adaptation_engine']['mq_broker']['port']
-        cfg.mq__exchange = yaml_config['adaptation_engine']['mq_broker']['exchange']
-        cfg.mq__inbound = yaml_config['adaptation_engine']['mq_broker']['routing_key']['inbound']
-        cfg.mq__outbound = yaml_config['adaptation_engine']['mq_broker']['routing_key']['outbound']
-        cfg.mq__username = yaml_config['adaptation_engine']['mq_broker']['username']
-        cfg.mq__password = yaml_config['adaptation_engine']['mq_broker']['password']
+        # database config
+        yml_database = yaml_config['adaptation_engine']['database']
+        cfg.database__host = yml_database['host']
+        cfg.database__port = yml_database['port']
+        cfg.database__database_name = yml_database['database']
+        cfg.database__collection_config = yml_database['collections']['config']
+        cfg.database__collection_log = yml_database['collections']['log']
+        cfg.database__collection_stack = yml_database['collections']['stack']
 
-        cfg.plugin_java = yaml_config['adaptation_engine']['plugins']['java']
-        cfg.plugin_python = yaml_config['adaptation_engine']['plugins']['python']
-        cfg.plugin_cpp = yaml_config['adaptation_engine']['plugins']['cpp']
-        cfg.plugin__grouping = yaml_config['adaptation_engine']['plugins'].get('grouping', [])
-        cfg.plugin__default_weighting = yaml_config['adaptation_engine']['plugins'].get('default_weighting', 1)
-        cfg.plugin__weightings = yaml_config['adaptation_engine']['plugins'].get('weightings', [])
+        # message queue config
+        yml_mq = yaml_config['adaptation_engine']['mq_broker']
+        cfg.mq__host = yml_mq['host']
+        cfg.mq__port = yml_mq['port']
+        cfg.mq__exchange = yml_mq['exchange']
+        cfg.mq__inbound = yml_mq['routing_key']['inbound']
+        cfg.mq__outbound = yml_mq['routing_key']['outbound']
+        cfg.mq__username = yml_mq['username']
+        cfg.mq__password = yml_mq['password']
 
-        cfg.heat_resource_mq__host = yaml_config['adaptation_engine']['heat_resource']['host']
-        cfg.heat_resource_mq__port = yaml_config['adaptation_engine']['heat_resource']['port']
-        cfg.heat_resource_mq__username = yaml_config['adaptation_engine']['heat_resource']['username']
-        cfg.heat_resource_mq__password = yaml_config['adaptation_engine']['heat_resource']['password']
-        cfg.heat_resource_mq__exchange = yaml_config['adaptation_engine']['heat_resource']['exchange']
-        cfg.heat_resource_mq__key = yaml_config['adaptation_engine']['heat_resource']['key']
+        # plugin config
+        yml_plugin = yaml_config['adaptation_engine']['plugins']
+        cfg.plugin__timeout = yml_plugin.get('timeout', 30)
+        cfg.plugin_java = yml_plugin['java']
+        cfg.plugin_python = yml_plugin['python']
+        cfg.plugin_cpp = yml_plugin['cpp']
+        cfg.plugin__grouping = yml_plugin.get('grouping', [])
+        cfg.plugin__default_weighting = yml_plugin.get('default_weighting', 1)
+        cfg.plugin__weightings = yml_plugin.get('weightings', [])
 
-        cfg.openstack__auth_url = yaml_config['adaptation_engine']['openstack_polling']['auth_url']
-        cfg.openstack__username = yaml_config['adaptation_engine']['openstack_polling']['username']
-        cfg.openstack__password = yaml_config['adaptation_engine']['openstack_polling']['password']
-        cfg.openstack__tenant = yaml_config['adaptation_engine']['openstack_polling']['tenant']
+        # heat resource config
+        yml_heat = yaml_config['adaptation_engine']['heat_resource']
+        cfg.heat_resource_mq__host = yml_heat['host']
+        cfg.heat_resource_mq__port = yml_heat['port']
+        cfg.heat_resource_mq__username = yml_heat['username']
+        cfg.heat_resource_mq__password = yml_heat['password']
+        cfg.heat_resource_mq__exchange = yml_heat['exchange']
+        cfg.heat_resource_mq__key = yml_heat['key']
 
-        cfg.openstack_event__host = yaml_config['adaptation_engine']['event']['host']
-        cfg.openstack_event__port = yaml_config['adaptation_engine']['event']['port']
-        cfg.openstack_event__username = yaml_config['adaptation_engine']['event']['username']
-        cfg.openstack_event__password = yaml_config['adaptation_engine']['event']['password']
-        cfg.openstack_event__exchange = yaml_config['adaptation_engine']['event']['exchange']
-        cfg.openstack_event__key = yaml_config['adaptation_engine']['event']['key']
+        # openstack message queue config
+        yml_opstk = yaml_config['adaptation_engine']['openstack_polling']
+        cfg.openstack__auth_url = yml_opstk['auth_url']
+        cfg.openstack__username = yml_opstk['username']
+        cfg.openstack__password = yml_opstk['password']
+        cfg.openstack__tenant = yml_opstk['tenant']
 
-        cfg.app_feedback__host = yaml_config['adaptation_engine']['app_feedback']['host']
-        cfg.app_feedback__port = yaml_config['adaptation_engine']['app_feedback']['port']
-        cfg.app_feedback__username = yaml_config['adaptation_engine']['app_feedback']['username']
-        cfg.app_feedback__password = yaml_config['adaptation_engine']['app_feedback']['password']
-        cfg.app_feedback__exchange = yaml_config['adaptation_engine']['app_feedback']['exchange']
-        cfg.app_feedback__key = yaml_config['adaptation_engine']['app_feedback']['key']
+        # event message queue config
+        yml_event = yaml_config['adaptation_engine']['event']
+        cfg.openstack_event__host = yml_event['host']
+        cfg.openstack_event__port = yml_event['port']
+        cfg.openstack_event__username = yml_event['username']
+        cfg.openstack_event__password = yml_event['password']
+        cfg.openstack_event__exchange = yml_event['exchange']
+        cfg.openstack_event__key = yml_event['key']
 
-    except Exception, err:
+        # feedback message queue config
+        yml_feedbk = yaml_config['adaptation_engine']['app_feedback']
+        cfg.app_feedback__host = yml_feedbk['host']
+        cfg.app_feedback__port = yml_feedbk['port']
+        cfg.app_feedback__username = yml_feedbk['username']
+        cfg.app_feedback__password = yml_feedbk['password']
+        cfg.app_feedback__exchange = yml_feedbk['exchange']
+        cfg.app_feedback__key = yml_feedbk['key']
+
+        cfg.objectmodel_endpoint__host = yaml_config['adaptation_engine']['objectmodel_endpoint']['host']
+
+        # sla agreements config
+        yml_sla = yaml_config['adaptation_engine']['sla_agreements']
+        cfg.sla_agreements__endpoint = yml_sla['endpoint']
+        cfg.sla_agreements__username = yml_sla['username']
+        cfg.sla_agreements__password = yml_sla['password']
+
+    except (KeyError, OSError), err:
         print "Exception loading config file [{0}]: ({1})".format(
             configfile,
             err

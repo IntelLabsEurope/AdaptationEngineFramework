@@ -15,11 +15,15 @@ limitations under the License.
 """
 import json
 import logging
+import multiprocessing
 
-import adaptationaction
-import database
-import openstack
-import output
+import requests
+
+import adaptationengine_framework.adaptationaction as adaptationaction
+import adaptationengine_framework.configuration as cfg
+import adaptationengine_framework.database as database
+import adaptationengine_framework.openstack as openstack
+import adaptationengine_framework.output as output
 
 
 LOGGER = logging.getLogger('syslog')
@@ -44,7 +48,11 @@ class HeatResourceHandler:
         """
         LOGGER.debug('heat resource handler init')
         self._active_resources = {}
+        self._active_vms = {}
         self._mq_handler = mq_handler
+
+        _manager = multiprocessing.Manager()
+        self._agreement_map = _manager.dict()
 
         self._recover_state()
 
@@ -76,54 +84,91 @@ class HeatResourceHandler:
                     )
 
                     heat_client = openstack.OpenStackClients.get_heat_client(
-                        ks_tenant_client
+                        ks_tenant_client,
+                        admin_ks_client=ks_admin_client
                     )
 
                     for stack in heat_client.stacks.list():
-                        for resource in heat_client.resources.list(stack.id):
-                            if (
-                                resource.resource_type ==
-                                "AdaptationEngine::Heat::AdaptationResponse"
+                        try:
+                            self._active_vms[stack.id] = []
+                            for resource in heat_client.resources.list(
+                                stack.id
                             ):
-                                da_stack = heat_client.stacks.template(
-                                    stack.id
-                                )
-
-                                resource_json = da_stack.get(
-                                    'resources',
-                                    {},
-                                ).get(resource.resource_name)
-
-                                event_name = resource_json.get(
-                                    'properties',
-                                    {},
-                                ).get('name')
-
-                                event_actions = resource_json.get(
-                                    'properties',
-                                    {},
-                                ).get('allowed_actions')
-
-                                event_h_scale = resource_json.get(
-                                    'properties',
-                                    {},
-                                ).get('horizontal_scale_out', None)
-
-                                actions = []
-                                for action in event_actions:
-                                    actions.append(
-                                        adaptationaction.AdaptationAction(
-                                            action
+                                if (
+                                        resource.resource_type ==
+                                        (
+                                            "AdaptationEngine::Heat::"
+                                            "AdaptationResponse"
                                         )
+                                ):
+                                    da_stack = heat_client.stacks.template(
+                                        stack.id
                                     )
-                                self._active_resources[
-                                    resource.physical_resource_id
-                                ] = {
-                                    'stack_id': stack.id,
-                                    'event': event_name,
-                                    'actions': actions,
-                                    'horizontal_scale_out': event_h_scale
-                                }
+
+                                    resource_json = da_stack.get(
+                                        'resources',
+                                        {},
+                                    ).get(resource.resource_name)
+
+                                    event_name = resource_json.get(
+                                        'properties',
+                                        {},
+                                    ).get('name')
+
+                                    agreement_id = resource_json.get(
+                                        'properties',
+                                        {},
+                                    ).get('agreement_id')
+
+                                    event_actions = resource_json.get(
+                                        'properties',
+                                        {},
+                                    ).get('allowed_actions')
+
+                                    event_h_scale = resource_json.get(
+                                        'properties',
+                                        {},
+                                    ).get('horizontal_scale_out', None)
+
+                                    actions = []
+                                    for action in event_actions:
+                                        actions.append(
+                                            adaptationaction.AdaptationAction(
+                                                action
+                                            )
+                                        )
+                                    self._active_resources[
+                                        resource.physical_resource_id
+                                    ] = {
+                                        'stack_id': stack.id,
+                                        'agreement_id': agreement_id,
+                                        'event': event_name,
+                                        'actions': actions,
+                                        'horizontal_scale_out': event_h_scale
+                                    }
+                                elif(
+                                    resource.resource_type ==
+                                    "OS::Nova::Server"
+                                ):
+                                    self._active_vms[stack.id].append(
+                                        resource.physical_resource_id
+                                    )
+
+                        except Exception, err:
+                            LOGGER.warn(
+                                "Tenant {} cannot access resources"
+                                " of stack {}. [Error: {}]".format(
+                                    tenant.name, stack.id, err
+                                )
+                            )
+                            # LOGGER.exception(err)
+                        else:
+                            LOGGER.info(
+                                "Recovered stack {} for tenant {}".format(
+                                    stack.id,
+                                    tenant.name
+                                )
+                            )
 
                 except Exception, err:
                     LOGGER.warn(
@@ -134,11 +179,15 @@ class HeatResourceHandler:
                     LOGGER.info(
                         "Recovered state for tenant {}".format(tenant.name)
                     )
-
+            database.Database.update_stack_list(self._active_vms)
             output.OUTPUT.info("Recovered state")
 
+        self._update_agreement_map()
         LOGGER.info(
             'Current active resources: {0}'.format(self._active_resources)
+        )
+        LOGGER.info(
+            'Current agreement map: {0}'.format(self._agreement_map)
         )
 
     def get_initial_actions(self, event_name, stack_id):
@@ -146,8 +195,8 @@ class HeatResourceHandler:
         LOGGER.info('getting initial action list')
         for resource in self._active_resources.itervalues():
             if (
-                resource.get('stack_id') == stack_id and
-                resource.get('event') == event_name
+                    resource.get('stack_id') == stack_id and
+                    resource.get('event') == event_name
             ):
                 return resource.get('actions')
 
@@ -163,12 +212,43 @@ class HeatResourceHandler:
         )
         for resource in self._active_resources.itervalues():
             if (
-                resource.get('stack_id') == stack_id and
-                resource.get('event') == event_name
+                    resource.get('stack_id') == stack_id and
+                    resource.get('event') == event_name
             ):
                 return resource
 
         return None
+
+    def get_agreement_map(self):
+        self._update_agreement_map()
+        return self._agreement_map.copy()  # return dict, not dictproxy
+
+    def _update_agreement_map(self):
+        """Return the dictionary mapping stack_ids to agreement_ids"""
+        LOGGER.debug(
+            'updating agreement map'
+        )
+        new_agreement_map = {}
+        for resource in self._active_resources.itervalues():
+            LOGGER.debug("Active Resource: {}".format(resource))
+            agreement_id = resource.get('agreement_id', None)
+            if agreement_id is not None:
+                new_agreement_map[agreement_id] = {
+                    'stack_id': resource.get('stack_id'),
+                    'event': resource.get('event')
+                }
+                LOGGER.debug(
+                    "New agreement map stack:{} agreement:{} event:{}".format(
+                        resource.get('stack_id'),
+                        agreement_id,
+                        resource.get('event')
+                    )
+                )
+
+        self._agreement_map.clear()
+        self._agreement_map.update(new_agreement_map)
+
+        LOGGER.debug('agreement map now: {}'.format(self._agreement_map))
 
     def message(self, message):
         """
@@ -197,18 +277,58 @@ class HeatResourceHandler:
                     LOGGER.info('action is [{0}]'.format(str(action)))
                     actions.append(adaptationaction.AdaptationAction(action))
 
+                agreement_id = heat_msg_data.get('agreement_id', None)
+
                 self._active_resources[resource_id] = {
                     'stack_id': stack_id,
                     'event': heat_msg_data['name'],
+                    'agreement_id': agreement_id,
                     'actions': actions,
                     'horizontal_scale_out': heat_msg_data.get(
                         'horizontal_scale_out',
                         None
                     ),
-                    # 'default_weighting': default_weighting,
-                    # 'weightings': weightings,
-                    # 'grouping': grouping
                 }
+
+                LOGGER.debug(
+                    "Adding to active resources stack:{} "
+                    "agreement:{} event:{}".format(
+                        stack_id,
+                        agreement_id,
+                        heat_msg_data['name']
+                    )
+                )
+
+                self._update_agreement_map()
+
+                database.Database.update_stack_list(
+                    self._active_vms,
+                    delay=8,
+                    create=True,
+                    stack_id=stack_id
+                )
+
+                if agreement_id is not None:
+                    try:
+                        # try PUT at sla api to create 'statement'
+                        base_url = cfg.sla_agreements__endpoint
+                        end_url = "/enforcements/{}/start".format(agreement_id)
+                        auth = (
+                            cfg.sla_agreements__username,
+                            cfg.sla_agreements__password
+                        )
+                        LOGGER.info(
+                            "PUT-ting to {}{}".format(base_url, end_url)
+                        )
+                        response = requests.put(
+                            "{}{}".format(base_url, end_url),
+                            auth=auth,
+                        )
+                        LOGGER.info("Response: {:.90}".format(response.text))
+                    except Exception, err:
+                        LOGGER.info(
+                            "Exception PUT-ting to sla api: {}".format(err)
+                        )
 
                 database.Database.log_adaptation_response_created(
                     stack_id=stack_id,
@@ -237,6 +357,9 @@ class HeatResourceHandler:
                     stack_id = self._active_resources[resource_id]['stack_id']
                     event_name = self._active_resources[resource_id]['event']
                     del self._active_resources[resource_id]
+                    # update stacks in database
+                    self._active_vms.pop(stack_id, None)
+                    database.Database.update_stack_list(self._active_vms, 0)
                 except KeyError, err:
                     LOGGER.info(
                         "KeyError for resource [{}], "
@@ -256,19 +379,20 @@ class HeatResourceHandler:
                     )
 
             elif heat_msg_type == 'heat_query':
-                output = []
+                output_json = []
 
                 for (event_resource_id, event) in (
-                    self._active_resources.iteritems()
+                        self._active_resources.iteritems()
                 ):
                     json_actions = []
 
                     for action in event['actions']:
                         json_actions.append(action.__dict__)
 
-                    output.append({
+                    output_json.append({
                         'resource_id': event_resource_id,
                         'stack_id': event['stack_id'],
+                        'agreement_id': event.get('agreement_id'),
                         'event_name': event['event'],
                         'actions': json_actions,
                         'horizontal_scale_out': event.get(
@@ -277,11 +401,11 @@ class HeatResourceHandler:
                         )
                     })
 
-                LOGGER.info('Ouput: {0}'.format(output))
+                LOGGER.info('Ouput: {0}'.format(output_json))
 
                 self._mq_handler.publish_to_heat_resource(
                     resource_id=resource_id,
-                    message=json.dumps({'resources': output})
+                    message=json.dumps({'resources': output_json})
                 )
             else:
                 raise Exception('invalid message: unrecognised heat type')

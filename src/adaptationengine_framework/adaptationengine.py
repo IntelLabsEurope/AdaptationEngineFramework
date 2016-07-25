@@ -21,16 +21,17 @@ import signal
 import sys
 import time
 
-import adaptationaction
-import database
-import distributor
-import enactor
-import event
-import heatresourcehandler
-import mqhandler
-import output
-import pluginmanager
-import utils
+import adaptationengine_framework.adaptationaction as adaptationaction
+import adaptationengine_framework.database as database
+import adaptationengine_framework.distributor as distributor
+import adaptationengine_framework.enactor as enactor
+import adaptationengine_framework.event as event
+import adaptationengine_framework.heatresourcehandler as heatresourcehandler
+import adaptationengine_framework.mqhandler as mqhandler
+import adaptationengine_framework.output as output
+import adaptationengine_framework.pluginmanager as pluginmanager
+import adaptationengine_framework.rest as rest
+import adaptationengine_framework.utils as utils
 
 
 LOGGER = utils.syslog_logging('adaptation-engine', logging.DEBUG)
@@ -47,17 +48,24 @@ class AdaptationEngine:
         """
         Create plugin and message queue managers
         """
+        _manager = multiprocessing.Manager()
+        self._locked_stacks = _manager.list()
+
         self._plugin_manager = pluginmanager.PluginManager()
         output.OUTPUT.info("Plugin manager started")
+
         self._mq_handler = mqhandler.MQHandler(msg_callback=self._on_message)
         output.OUTPUT.info("Message Queue handler started")
+
         self._heat_resources = heatresourcehandler.HeatResourceHandler(
             mq_handler=self._mq_handler,
         )
         output.OUTPUT.info("Heat resource handler started")
 
-        _manager = multiprocessing.Manager()
-        self._locked_stacks = _manager.list()
+        self._webbo = rest.Webbo(
+            self._heat_resources.get_agreement_map
+        )
+        output.OUTPUT.info("Web server created")
 
     def setup(self):
         """Setup required message queue connections"""
@@ -67,9 +75,9 @@ class AdaptationEngine:
         """These action types are handled without using plugins, for now"""
         for action in aa_list:
             if action.adaptation_type not in [
-                adaptationaction.AdaptationType.DeveloperAction,
-                adaptationaction.AdaptationType.StartAction,
-                adaptationaction.AdaptationType.StopAction
+                    adaptationaction.AdaptationType.DeveloperAction,
+                    adaptationaction.AdaptationType.StartAction,
+                    adaptationaction.AdaptationType.StopAction
             ]:
                 return False
 
@@ -85,71 +93,18 @@ class AdaptationEngine:
         try:
             LOGGER.info("message was [{}]".format(str(message)))
             msg_json = json.loads(message)
-            if 'heat' in msg_json and len(msg_json) is 1:
+            if len(msg_json) == 1 and 'heat' in msg_json:
                 # presumably a message from heat
                 self._heat_resources.message(message)
-            elif 'id' in msg_json and len(msg_json) >= 4:
+
+            elif len(msg_json) >= 4 and 'id' in msg_json:
                 # assuredly an event
                 cw_event = event.Event(message)
-
                 if cw_event.stack_id not in self._locked_stacks:
                     self._locked_stacks.append(cw_event.stack_id)
                     try:
-                        aa_list = self._heat_resources.get_initial_actions(
-                            event_name=cw_event.name,
-                            stack_id=cw_event.stack_id
-                        )
-                        if aa_list:
-                            heat_resource = self._heat_resources.get_resource(
-                                event_name=cw_event.name,
-                                stack_id=cw_event.stack_id
-                            )
-
-                            if self._is_passthrough(aa_list):
-                                LOGGER.info(
-                                    "single initial action is"
-                                    "passthrough type [{}]".format(aa_list)
-                                )
-                                pass_action = aa_list[0]
-                                try:
-                                    pass_action.target = (
-                                        cw_event.machines[0].get('id')
-                                    )
-                                except Exception, err:
-                                    LOGGER.error(
-                                        "No machines field in event"
-                                        "to set target from"
-                                    )
-                                LOGGER.info("Enacting adaptation")
-                                enactor.Enactor.enact(
-                                    event=cw_event,
-                                    heat_resource=heat_resource,
-                                    stack_id=cw_event.stack_id,
-                                    adaptation_action=pass_action,
-                                )
-
-                                self._unlock_stack(cw_event.stack_id)
-                            else:
-                                dist = distributor.Distributor(
-                                    cw_event,
-                                    initial_action_list=aa_list,
-                                    heat_resource=heat_resource,
-                                    callback=self._on_distributor_results,
-                                    plugin_manager=self._plugin_manager,
-                                )
-                                dist.start()
-                        else:
-                            self._unlock_stack(cw_event.stack_id)
-                            LOGGER.info(
-                                "Enactment invalid: no valid initial"
-                                " actions found for event [{}] from "
-                                "stack [{}]".format(
-                                    cw_event.name,
-                                    cw_event.stack_id
-                                )
-                            )
+                        self._process_event(cw_event)
                     except Exception, err:
-                        self._unlock_stack(cw_event.stack_id)
                         raise Exception(err)
                 else:
                     LOGGER.info(
@@ -168,7 +123,6 @@ class AdaptationEngine:
         except ValueError, err:
             # too large / not json / incorrect message format
             LOGGER.error('{}'.format(err))
-
         except KeyError, err:
             LOGGER.error("Message missing field: [{}]".format(err))
         except Exception, err:
@@ -178,13 +132,73 @@ class AdaptationEngine:
                 )
             )
             LOGGER.exception(err)
+            self._unlock_stack(cw_event.stack_id)
+
+    def _process_event(self, cw_event):
+        """
+        Process a cloudwave event message
+        """
+        action_list = self._heat_resources.get_initial_actions(
+            event_name=cw_event.name,
+            stack_id=cw_event.stack_id
+        )
+        if action_list:
+            heat_resource = self._heat_resources.get_resource(
+                event_name=cw_event.name,
+                stack_id=cw_event.stack_id
+            )
+
+            if self._is_passthrough(action_list):
+                LOGGER.info(
+                    "single initial action is"
+                    "passthrough type [{}]".format(action_list)
+                )
+                pass_action = action_list[0]
+                try:
+                    pass_action.target = (
+                        cw_event.machines[0].get('id')
+                    )
+                except AttributeError:
+                    LOGGER.error(
+                        "No machines field in event"
+                        "to set target from"
+                    )
+                LOGGER.info("Enacting adaptation")
+                enactor.Enactor.enact(
+                    event=cw_event,
+                    heat_resource=heat_resource,
+                    stack_id=cw_event.stack_id,
+                    adaptation_action=pass_action,
+                )
+                self._unlock_stack(cw_event.stack_id)
+            else:
+                dist = distributor.Distributor(
+                    cw_event,
+                    input_action_list=action_list,
+                    heat_resource=heat_resource,
+                    agreement_map=self._heat_resources.get_agreement_map(),
+                    callback=self._on_distributor_results,
+                    plugin_manager=self._plugin_manager,
+                )
+                dist.start()
+        else:
+            LOGGER.info(
+                "Enactment invalid: no valid initial"
+                " actions found for event [{}] from "
+                "stack [{}]".format(
+                    cw_event.name,
+                    cw_event.stack_id
+                )
+            )
+            self._unlock_stack(cw_event.stack_id)
 
     def _on_distributor_results(
-        self,
-        event,
-        initial_actions,
-        heat_resource,
-        results,
+            self,
+            cwevent,
+            initial_actions,
+            heat_resource,
+            results,
+            logged_results
     ):
         """
         Callback executed by the distributor when it has gotten results
@@ -192,8 +206,8 @@ class AdaptationEngine:
         """
         try:
             whitelist_types = []
-            for x in initial_actions:
-                whitelist_types.append(x.adaptation_type)
+            for action in initial_actions:
+                whitelist_types.append(action.adaptation_type)
 
             LOGGER.info('whitelist_types [{}]'.format(whitelist_types))
             LOGGER.info('results [{}]'.format(results))
@@ -217,10 +231,11 @@ class AdaptationEngine:
 
             try:
                 enactor.Enactor.enact(
-                    event=event,
+                    event=cwevent,
                     heat_resource=heat_resource,
-                    stack_id=event.stack_id,
+                    stack_id=cwevent.stack_id,
                     adaptation_action=chosen_adaptation,
+                    logged_results=logged_results
                 )
             except Exception, err:
                 LOGGER.error("Error enacting adaptation [{}]".format(err))
@@ -230,15 +245,15 @@ class AdaptationEngine:
                 "There was an exception handling distributor "
                 "results: [{}]".format(err)
             )
-            #  LOGGER.exception(err)
 
-        self._unlock_stack(event.stack_id)
+        self._unlock_stack(cwevent.stack_id)
 
     def _unlock_stack(self, stackid):
         """
         Remove stackid from the list of locked stacks,
         allowing new adaptations to be performed on it
         """
+        LOGGER.info("Unlocking stack")
         try:
             self._locked_stacks.remove(stackid)
         except ValueError:
@@ -250,11 +265,13 @@ class AdaptationEngine:
     def run(self):
         """Connect the message queue handlers"""
         self._mq_handler.run()
+        self._webbo.start()
 
     def stop(self):
         """Disconnect the message queue handlers"""
         try:
             self._mq_handler.stop()
+            self._webbo.stop()
         except Exception, err:
             print err
 
@@ -269,7 +286,7 @@ def main():
     """Do the thing"""
     usage = "usage: %prog"
     description = "Adaptation Engine"
-    version = "%prog 0.8.3"
+    version = "%prog 1.0.7"
 
     output.OUTPUT.info("Initialising...")
 

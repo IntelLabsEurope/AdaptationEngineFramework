@@ -19,7 +19,7 @@ import time
 
 import pika
 
-import healthcheck
+import adaptationengine_framework.healthcheck as healthcheck
 
 LOGGER = logging.getLogger('syslog')
 
@@ -30,13 +30,13 @@ class RabbitMQ(threading.Thread):
     """
 
     def __init__(
-        self,
-        host,
-        port,
-        username,
-        password,
-        exchange,
-        key,
+            self,
+            host,
+            port,
+            username,
+            password,
+            exchange,
+            key,
     ):
         """Create the connection and execute thread setup"""
         self._EXCHANGE = exchange
@@ -55,7 +55,7 @@ class RabbitMQ(threading.Thread):
             credentials=credentials
         )
 
-        LOGGER.debug(
+        LOGGER.info(
             'RabbitMQ connection to {0}:{1} initialised'.format(host, port)
         )
 
@@ -126,7 +126,7 @@ class RabbitMQ(threading.Thread):
 
         Add channel close callback, declare exchange
         """
-        LOGGER.debug('Channel opened')
+        LOGGER.info('Channel opened')
         self._CHANNEL = channel
         self._CHANNEL.add_on_close_callback(self._on_channel_closed)
         self._CHANNEL.exchange_declare(
@@ -151,7 +151,7 @@ class RabbitMQ(threading.Thread):
         """
         Callback executed when the exchange is delared
         """
-        LOGGER.debug('Exchange declared')
+        LOGGER.info('Exchange declared')
         pass
 
     def run(self):
@@ -186,15 +186,15 @@ class RabbitConsumer(RabbitMQ):
     """
 
     def __init__(
-        self,
-        host,
-        port,
-        username,
-        password,
-        exchange,
-        key,
-        queue=None,
-        msg_callback=None,
+            self,
+            host,
+            port,
+            username,
+            password,
+            exchange,
+            key,
+            queue=None,
+            msg_callback=None,
     ):
         """Basic setup, execute parent init"""
         self._QUEUE = queue
@@ -209,7 +209,7 @@ class RabbitConsumer(RabbitMQ):
 
         Declare queue, either with an auto-generated name, or a supplied one
         """
-        LOGGER.debug('Exchange declared')
+        LOGGER.info('Exchange declared')
         if not self._QUEUE:
             self._CHANNEL.queue_declare(
                 self._on_queue_declared,
@@ -228,7 +228,7 @@ class RabbitConsumer(RabbitMQ):
 
         Bind queue to channel
         """
-        LOGGER.debug('Queue declared')
+        LOGGER.info('Queue declared')
         self._QUEUE = response.method.queue
         self._CHANNEL.queue_bind(
             self._on_queue_bound,
@@ -243,7 +243,7 @@ class RabbitConsumer(RabbitMQ):
 
         Create a consumer and start it consuming
         """
-        LOGGER.debug('Queue bound')
+        LOGGER.info('Queue bound')
         self._CONSUMER = self._CHANNEL.basic_consume(
             self._on_message_received,
             self._QUEUE,
@@ -257,7 +257,7 @@ class RabbitConsumer(RabbitMQ):
         Pass message to the callback function specified on initialisation, if
         there was one
         """
-        LOGGER.debug('Message received')
+        LOGGER.info('Message received')
         try:
             if self._MSG_CALLBACK is not None:
                 self._MSG_CALLBACK(body)
@@ -274,13 +274,13 @@ class RabbitPublisher(RabbitMQ):
     """
 
     def __init__(
-        self,
-        host,
-        port,
-        username,
-        password,
-        exchange,
-        key,
+            self,
+            host,
+            port,
+            username,
+            password,
+            exchange,
+            key,
     ):
         """Execute parent init"""
         RabbitMQ.__init__(self, host, port, username, password, exchange, key)
@@ -290,8 +290,8 @@ class RabbitPublisher(RabbitMQ):
         Publish a provided message, optionally appending a resource_id
         to the existing configured routing key
         """
-        LOGGER.debug('Publishing a message...')
-        LOGGER.debug('existing key [{0}]'.format(self._KEY))
+        LOGGER.info('Publishing a message...')
+        LOGGER.info('existing key [{0}]'.format(self._KEY))
         if resource_id:
             try:
                 respond_key = self._KEY.format(resource_id=resource_id)
@@ -303,8 +303,8 @@ class RabbitPublisher(RabbitMQ):
         else:
             respond_key = self._KEY
 
-        LOGGER.debug('response key [{0}]'.format(respond_key))
-        LOGGER.debug("response: {0}".format(message))
+        LOGGER.info('response key [{0}]'.format(respond_key))
+        LOGGER.info("response: {0}".format(message))
 
         try:
             self._CHANNEL.basic_publish(
@@ -317,7 +317,7 @@ class RabbitPublisher(RabbitMQ):
                 "Exception while publishing message: [{0}]".format(err)
             )
         else:
-            LOGGER.debug('Message published')
+            LOGGER.info('Message published')
 
 
 class RabbitHealthCheck(RabbitMQ):
@@ -328,14 +328,14 @@ class RabbitHealthCheck(RabbitMQ):
     """
 
     def __init__(
-        self,
-        host,
-        port,
-        username,
-        password,
-        exchange,
-        key,
-        name='RabbitMQ Broker',
+            self,
+            host,
+            port,
+            username,
+            password,
+            exchange,
+            key,
+            name='RabbitMQ Broker',
     ):
         """Basic setup, create health checker, setup thread"""
         self._CONSUMER = None

@@ -19,11 +19,11 @@ import time
 import uuid
 import yaml
 
-import adaptationaction
-import configuration as cfg
-import database
-import mqhandler
-import openstack
+import adaptationengine_framework.adaptationaction as adaptationaction
+import adaptationengine_framework.configuration as cfg
+import adaptationengine_framework.database as database
+import adaptationengine_framework.mqhandler as mqhandler
+import adaptationengine_framework.openstack as openstack
 
 
 LOGGER = logging.getLogger('syslog')
@@ -36,10 +36,10 @@ class Enactor:
 
     @staticmethod
     def poll_migrate_complete(
-        nova_client,
-        adaptation_action,
-        retry_wait=10,
-        retries=20
+            nova_client,
+            adaptation_action,
+            retry_wait=10,
+            retries=20
     ):
         """
         Continually check Nova for physical location of VM until it is
@@ -59,8 +59,8 @@ class Enactor:
                         LOGGER.info(server)
                         # return true if we find it
                         if (
-                            server.get('uuid', None) ==
-                            adaptation_action.target
+                                server.get('uuid', None) ==
+                                adaptation_action.target
                         ):
                             nova_client.servers.get(
                                 server.get('uuid')
@@ -85,29 +85,20 @@ class Enactor:
         return False
 
     @staticmethod
-    def poll_horizontal_scale_complete(
-        heat_client,
-        stack_id,
-        extend_embargo=0,
-        retry_wait=10,
-        retries=20
+    def poll_stack_update_complete(
+            heat_client,
+            stack_id,
+            retry_wait=10,
+            retries=20
     ):
         """
         Continually check Heat for status of stack until it is marked
-        as 'COMPLETE' and extend_embargo time runs out, or retries run out
+        as 'COMPLETE' or retries run out
         """
         for attempt in xrange(retries):
             stack = heat_client.stacks.get(stack_id)
             if stack.status == 'COMPLETE':
                 LOGGER.info("Stack update complete")
-                if extend_embargo > 0:
-                    LOGGER.info(
-                        "Stack adaptation embargo extended by {} "
-                        "seconds. Sleeping.".format(
-                            extend_embargo
-                        )
-                    )
-                    time.sleep(extend_embargo)
                 LOGGER.info("Adaptation complete. Returning True.")
                 return True
             else:
@@ -126,10 +117,10 @@ class Enactor:
 
     @staticmethod
     def poll_start_complete(
-        nova_client,
-        instance_id,
-        retry_wait=5,
-        retries=20
+            nova_client,
+            instance_id,
+            retry_wait=5,
+            retries=20
     ):
         """
         Check Nova for current instance power state and compare to
@@ -145,10 +136,10 @@ class Enactor:
 
     @staticmethod
     def poll_stop_complete(
-        nova_client,
-        instance_id,
-        retry_wait=10,
-        retries=20
+            nova_client,
+            instance_id,
+            retry_wait=10,
+            retries=20
     ):
         """
         Check Nova for current instance power state and compare to
@@ -164,11 +155,11 @@ class Enactor:
 
     @staticmethod
     def poll_power_state(
-        nova_client,
-        instance_id,
-        desired_states,
-        retry_wait,
-        retries
+            nova_client,
+            instance_id,
+            desired_states,
+            retry_wait,
+            retries
     ):
         """
         Check Nova for current instance power state and compare to
@@ -219,7 +210,13 @@ class Enactor:
         return False
 
     @staticmethod
-    def enact(event, heat_resource, stack_id, adaptation_action):
+    def enact(
+            event,
+            heat_resource,
+            stack_id,
+            adaptation_action,
+            logged_results={}
+    ):
         """
         Enact an adaptation action upon a specified stack using Openstack APIs,
         posting message queue notficiations as appropriate
@@ -296,14 +293,15 @@ class Enactor:
         database.Database.log_adaptation_started(
             stack_id=stack_id,
             event_name=event.name,
-            adaptation=adaptation_action
+            adaptation=adaptation_action,
+            consolidated_results=logged_results
         )
 
         # ENACT
         LOGGER.info("Openstack is doing things now....")
         if (
-            adaptation_action.adaptation_type ==
-            adaptationaction.AdaptationType.MigrateAction
+                adaptation_action.adaptation_type ==
+                adaptationaction.AdaptationType.MigrateAction
         ):
             nova_client.servers.live_migrate(
                 adaptation_action.target,
@@ -321,29 +319,39 @@ class Enactor:
                 nova_client,
                 adaptation_action
             )
-
-            # TODO: need to add extend_embargo to all types
-            if enact_status is True:
-                LOGGER.info('Sleeping for 120 seconds')
-                time.sleep(120)
-
         elif (
-            adaptation_action.adaptation_type ==
-            adaptationaction.AdaptationType.VerticalScaleAction
+                adaptation_action.adaptation_type ==
+                adaptationaction.AdaptationType.VerticalScaleAction
         ):
-            LOGGER.info(
-                "[ENACTMENT] VerticalScaleAction, {} scales to {}. "
-                "Not supported yet though!".format(
-                    adaptation_action.target,
-                    adaptation_action.scale_value
-                )
-            )
-            # TODO
-            enact_status = True
+            try:
+                desired_id = None
+                for flavor in nova_client.flavors.list():
+                    if flavor.name == adaptation_action.scale_value:
+                        desired_id = flavor.id
 
+                nova_client.servers.resize(
+                    adaptation_action.target,
+                    desired_id
+                )
+                LOGGER.info(
+                    "[ENACTMENT] VerticalScaleAction, "
+                    "{} scales to {}. ".format(
+                        adaptation_action.target,
+                        adaptation_action.scale_value
+                    )
+                )
+
+            except Exception, err:
+                LOGGER.exception(err)
+                enact_status = False
+            else:
+                enact_status = Enactor.poll_stack_update_complete(
+                    heat_client,
+                    stack_id
+                )
         elif (
-            adaptation_action.adaptation_type ==
-            adaptationaction.AdaptationType.HorizontalScaleAction
+                adaptation_action.adaptation_type ==
+                adaptationaction.AdaptationType.HorizontalScaleAction
         ):
             LOGGER.info("[ENACTMENT] HorizontalScaleAction")
             try:
@@ -390,15 +398,14 @@ class Enactor:
                 LOGGER.exception(err)
                 enact_status = False
             else:
-                enact_status = Enactor.poll_horizontal_scale_complete(
+                enact_status = Enactor.poll_stack_update_complete(
                     heat_client,
-                    stack_id,
-                    extend_embargo=resource_config.get('extend_embargo', 0),
+                    stack_id
                 )
 
         elif (
-            adaptation_action.adaptation_type ==
-            adaptationaction.AdaptationType.DeveloperAction
+                adaptation_action.adaptation_type ==
+                adaptationaction.AdaptationType.DeveloperAction
         ):
             LOGGER.info(
                 "[ENACTMENT] DeveloperAction, {} has value {}".format(
@@ -420,15 +427,9 @@ class Enactor:
             )
             adaptation_request_broker.disconnect()
             enact_status = True
-
-            # TODO: need to add extend_embargo to all types
-            if enact_status is True:
-                LOGGER.info('Sleeping for 120 seconds')
-                time.sleep(120)
-
         elif (
-            adaptation_action.adaptation_type ==
-            adaptationaction.AdaptationType.NoAction
+                adaptation_action.adaptation_type ==
+                adaptationaction.AdaptationType.NoAction
         ):
             LOGGER.info(
                 "[ENACTMENT] NoAction for stack {}".format(
@@ -438,8 +439,8 @@ class Enactor:
             enact_status = True
 
         elif (
-            adaptation_action.adaptation_type ==
-            adaptationaction.AdaptationType.StartAction
+                adaptation_action.adaptation_type ==
+                adaptationaction.AdaptationType.StartAction
         ):
             LOGGER.info(
                 "[ENACTMENT] StartAction for stack {}".format(
@@ -458,8 +459,8 @@ class Enactor:
             )
 
         elif (
-            adaptation_action.adaptation_type ==
-            adaptationaction.AdaptationType.StopAction
+                adaptation_action.adaptation_type ==
+                adaptationaction.AdaptationType.StopAction
         ):
             LOGGER.info(
                 "[ENACTMENT] StopAction for stack {}".format(
@@ -477,6 +478,29 @@ class Enactor:
                 adaptation_action.target
             )
 
+        elif (
+                adaptation_action.adaptation_type ==
+                adaptationaction.AdaptationType.LowPowerAction
+        ):
+            LOGGER.info(
+                "[ENACTMENT] LowPowerAction directed at {}".format(
+                    adaptation_action.application
+                )
+            )
+            adaptation_request_broker = mqhandler.QuickRabbit(
+                host=cfg.mq__host,
+                port=cfg.mq__port,
+                username=cfg.mq__username,
+                password=cfg.mq__password,
+            )
+            adaptation_request_broker.publish_lowpower_request(
+                cfg.mq__exchange,
+                cfg.mq__outbound,
+                adaptation_action,
+                event
+            )
+            adaptation_request_broker.disconnect()
+            enact_status = True
         else:
             LOGGER.info(
                 "[ENACTMENT] Unsupported action type [{}]!".format(
@@ -485,7 +509,16 @@ class Enactor:
             )
             enact_status = False
 
-        # LOGGER.info("... openstack has done things probably")
+        # sleep for a while, if extend_embargo is set
+        extend_embargo = heat_resource.get('extend_embargo', 0)
+        if enact_status is True and extend_embargo > 0:
+            LOGGER.info(
+                "Stack adaptation embargo extended by {} "
+                "seconds. Sleeping.".format(
+                    extend_embargo
+                )
+            )
+            time.sleep(extend_embargo)
 
         # Publish notifications
         openstack_broker.publish_openstack_complete_event(

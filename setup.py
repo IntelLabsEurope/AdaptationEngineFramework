@@ -23,7 +23,7 @@ ez_setup.use_setuptools()
 
 setuptools.setup(
     name="adaptation-engine-framework",
-    version="0.8.3",
+    version="1.0.7",
     description="Adaptation Engine framework",
     author="Intel - Daniel Doyle",
     author_email="danielx.doyle@intel.com",
@@ -35,9 +35,10 @@ setuptools.setup(
         'pymongo',
         'jpype1',
         'requests',
-        'python-keystoneclient==0.11.1',
-        'python-novaclient==2.20.0',
-        'python-heatclient==0.2.12',
+        'python-keystoneclient==1.7.2',
+        'python-novaclient==2.30.1',
+        'python-heatclient==1.0.0',
+        'web.py',
     ],
     packages=setuptools.find_packages('src'),
     package_dir={'': 'src'},

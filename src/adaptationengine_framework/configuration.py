@@ -14,12 +14,14 @@ See the License for the specific language governing permissions and
 limitations under the License.
 """
 
+webbo__port = None
 
 database__host = None
 database__port = None
 database__database_name = None
 database__collection_config = None
 database__collection_log = None
+database__collection_stack = None
 
 mq__host = None
 mq__port = None
@@ -29,6 +31,7 @@ mq__outbound = None
 mq__username = None
 mq__password = None
 
+plugin__timeout = None
 plugin_java = None
 plugin_python = None
 plugin_cpp = None
@@ -61,3 +64,9 @@ app_feedback__username = None
 app_feedback__password = None
 app_feedback__exchange = None
 app_feedback__key = None
+
+objectmodel_endpoint__host = None
+
+sla_agreements__endpoint = None
+sla_agreements__username = None
+sla_agreements__password = None

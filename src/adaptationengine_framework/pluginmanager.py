@@ -19,10 +19,10 @@ import os
 import threading
 import uuid
 
-from jpype import *
+import jpype
 
-import configuration as cfg
-import plugins
+import adaptationengine_framework.configuration as cfg
+import adaptationengine_framework.plugins as plugins
 
 LOGGER = logging.getLogger('syslog')
 
@@ -40,14 +40,17 @@ class PluginManager:
         # Load CFG
         self._plugin__grouping = cfg.plugin__grouping
         self._plugin__default_weighting = cfg.plugin__default_weighting
-        self._plugin__weightings = cfg.plugin__weightings
+
+        # Build list of weightings
+        self._plugin__weightings = {
+            p.get('name'): p.get('weight') for p in cfg.plugin__weightings
+        }
 
         # Java setup
         self._plugins = {}
         self._jvm_lock = threading.Lock()
-        self.jvm_needed = False
         self.jvm_classpath = "{}/AdaptationEngine.jar".format(cfg.plugin_java)
-        self._scan_for_java_plugins()
+        self.jvm_needed = self._scan_for_java_plugins()
 
         if self.jvm_needed:
             self._start_jvm()
@@ -61,13 +64,13 @@ class PluginManager:
         discovered plugins, if not already started
         """
         try:
-            if not isJVMStarted() and self.jvm_needed:
+            if not jpype.isJVMStarted() and self.jvm_needed:
                 LOGGER.info("JVM is not started. Starting...")
                 flag_list = [
                     '-Djava.class.path={}'.format(self.jvm_classpath)
                 ]
-                startJVM(
-                    getDefaultJVMPath(),
+                jpype.startJVM(
+                    jpype.getDefaultJVMPath(),
                     *flag_list
                 )
                 LOGGER.info("JVM started")
@@ -81,14 +84,18 @@ class PluginManager:
         Get a new instance of all the plugins we have
         """
         LOGGER.info('Getting plugins {}'.format(plugin_name_list))
-        plugins = []
+        plugin_instances = []
         for name in plugin_name_list:
-            generator = self._plugins.get(name, None)
-            plugins.append(generator.next())
-        LOGGER.info('Returning plugins {}'.format(plugins))
-        return plugins
+            generator = self._plugins.get(name)
+            if generator:
+                plugin_instances.append(generator.next())
+            else:
+                LOGGER.error("could not get plugin {}".format(name))
+        LOGGER.info('Returning plugins {}'.format(plugin_instances))
+        return plugin_instances
 
     def _scan_for_python_plugins(self):
+        """Find and store python plugins"""
         plugin_dir = cfg.plugin_python
         try:
             for dir_name in os.listdir(plugin_dir):
@@ -108,7 +115,12 @@ class PluginManager:
                                 ),
                                 name=dir_name,
                                 uuid=plugin_uuid,
-                                weight=1
+                                weight=(
+                                    self._plugin__weightings.get(
+                                        dir_name,
+                                        self._plugin__default_weighting
+                                    )
+                                )
                             )
                         )
                         LOGGER.info(
@@ -143,6 +155,7 @@ class PluginManager:
         no plugins found.
         """
         plugin_dir = cfg.plugin_java
+        jvm_needed = False
         try:
             for dir_name in os.listdir(plugin_dir):
                 # list everything in plugin_dir
@@ -156,14 +169,14 @@ class PluginManager:
                     plugin_uuid = uuid.uuid4().hex
                     if os.path.isfile(full_jar_path):
                         full_all_jars_path = full_jar_path
-                        for file in os.listdir(full_dir_path):
+                        for item in os.listdir(full_dir_path):
                             if (
-                                file.endswith(".jar") and
-                                file is not '{0}.jar'.format(dir_name)
+                                    item.endswith(".jar") and
+                                    item != '{0}.jar'.format(dir_name)
                             ):
                                 full_all_jars_path = (
                                     full_all_jars_path + ":" + os.path.join(
-                                        full_dir_path, file
+                                        full_dir_path, item
                                     )
                                 )
                         self._plugins[dir_name] = (
@@ -172,9 +185,15 @@ class PluginManager:
                                 lock=self._jvm_lock,
                                 name=dir_name,
                                 uuid=plugin_uuid,
-                                weight=1
+                                weight=(
+                                    self._plugin__weightings.get(
+                                        dir_name,
+                                        self._plugin__default_weighting
+                                    )
+                                )
                             )
                         )
+                        jvm_needed = True
                         self.jvm_classpath += ":{}".format(full_all_jars_path)
                         LOGGER.info(
                             "Using a plugin called [{}] in "
@@ -206,4 +225,9 @@ class PluginManager:
                 "seem to exist! Setting JVM to not-needed."
                 " [{}]".format(plugin_dir)
             )
-            self.jvm_needed = False
+            return False
+        else:
+            if jvm_needed:
+                return True
+            else:
+                return False

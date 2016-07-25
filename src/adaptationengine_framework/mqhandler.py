@@ -22,8 +22,8 @@ import uuid
 
 import pika
 
-import configuration as cfg
-import rabbitmq
+import adaptationengine_framework.configuration as cfg
+import adaptationengine_framework.rabbitmq as rabbitmq
 
 
 LOGGER = logging.getLogger('syslog')
@@ -135,11 +135,11 @@ class QuickRabbit:
     """
 
     def __init__(
-        self,
-        host,
-        port,
-        username,
-        password,
+            self,
+            host,
+            port,
+            username,
+            password,
     ):
         """Setup the connection, channel, etc"""
         credentials = pika.PlainCredentials(
@@ -193,11 +193,11 @@ class QuickRabbit:
         Create a JSON message using the supplied details to match the accepted
         Openstack Horizon custom notification format
         """
-        _ISO8601_TIME_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
+        ISO8601_time_format = '%Y-%m-%dT%H:%M:%SZ'
 
         # timestamp
         utc = datetime.datetime.utcnow()
-        timestamp = utc.strftime(_ISO8601_TIME_FORMAT)
+        timestamp = utc.strftime(ISO8601_time_format)
 
         # generate message
         payload = {
@@ -236,8 +236,23 @@ class QuickRabbit:
             )
         )
 
+    def publish_lowpower_request(
+            self, exchange, key, adaptation_action, event
+    ):
+        """Publish a JSON lowpower request message"""
+        # we need to redirect and rename the event before sending
+        self._publish(
+            exchange,
+            key,
+            adaptation_action.generate_adaptation_request(
+                event,
+                name='lowpower',
+                stack_id=adaptation_action.application,
+            )
+        )
+
     def publish_app_feedback_start_event(
-        self, exchange, key, stack_id, name, details
+            self, exchange, key, stack_id, name, details
     ):
         """
         Publish a JSON application feedback 'start' notification message
@@ -254,7 +269,7 @@ class QuickRabbit:
         self._publish(exchange, key, message)
 
     def publish_app_feedback_complete_event(
-        self, exchange, key, stack_id, name, details
+            self, exchange, key, stack_id, name, details
     ):
         """
         Publish a JSON application feedback 'complete' notification message
@@ -271,7 +286,7 @@ class QuickRabbit:
         self._publish(exchange, key, message)
 
     def publish_app_feedback_failed_event(
-        self, exchange, key, stack_id, name, details
+            self, exchange, key, stack_id, name, details
     ):
         """
         Publish a JSON application feedback 'failed' notification message
@@ -292,11 +307,11 @@ class QuickRabbit:
         Create a JSON message using the supplied details to match the accepted
         application feedback notification format
         """
-        _ISO8601_TIME_FORMAT = '%Y-%m-%dT%H:%M:%SZ'
+        ISO8601_time_format = '%Y-%m-%dT%H:%M:%SZ'
 
         # timestamp
         utc = datetime.datetime.utcnow()
-        timestamp = utc.strftime(_ISO8601_TIME_FORMAT)
+        timestamp = utc.strftime(ISO8601_time_format)
 
         # generate message
         payload = {

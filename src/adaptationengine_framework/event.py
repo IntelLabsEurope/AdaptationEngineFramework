@@ -62,8 +62,8 @@ class Event:
             ]
         )
         if (
-            type(cwevent['id']) is dict and
-            required_id_fields.issubset(set(cwevent['id']))
+                type(cwevent['id']) is dict and
+                required_id_fields.issubset(set(cwevent['id']))
         ):
             self.user_id = cwevent['id']['user_id']
             self.tenant_id = cwevent['id']['tenant']

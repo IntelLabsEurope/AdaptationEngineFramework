@@ -16,6 +16,7 @@ limitations under the License.
 
 
 class OUTPUT:
+    """Simple class for standardising stdout printing"""
 
     HEADER = '\033[95m'
     BLUE = '\033[94m'
@@ -24,11 +25,13 @@ class OUTPUT:
 
     @staticmethod
     def info(message, addon=None):
-        output = OUTPUT.HEADER + str(message) + OUTPUT.CLOSE
+        """Print an INFO level message to stdout"""
+        output = str(message)
         if addon:
-            output += OUTPUT.BLUE + " [" + str(addon) + "]" + OUTPUT.CLOSE
+            output += " [" + str(addon) + "]"
         print output
 
     @staticmethod
     def error(message):
-        print OUTPUT.FAIL + str(message) + OUTPUT.CLOSE
+        """Print an ERROR level message to stdout"""
+        print str(message)

@@ -14,6 +14,8 @@
 # limitations under the License.
 
 adaptation_engine:
+    webbo:
+        port: 5664
     database:
         host: 127.0.0.1
         port: 27017
@@ -21,7 +23,9 @@ adaptation_engine:
         collections:
             config: config
             log: log
+            stack: stack
     plugins:
+        #timeout: 60
         java: /opt/adaptation-engine/plugins/java
         python: /opt/adaptation-engine/plugins/python
         cpp: /opt/adaptation-engine/plugins/cpp
@@ -72,3 +76,9 @@ adaptation_engine:
         username: guest
         password: guest
         key: aemessenger.{resource_id} # {resource_id} is replaced programmatically
+    sla_agreements:
+        endpoint: "http://127.0.0.1:8080/sla-service"
+        username: "user"
+        password: "password"
+    objectmodel_endpoint:
+        host: "http://127.0.0.1:8282/v2"

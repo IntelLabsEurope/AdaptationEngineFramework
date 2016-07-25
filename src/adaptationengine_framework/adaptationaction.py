@@ -28,6 +28,7 @@ class AdaptationType:
     NoAction = 5
     StartAction = 6
     StopAction = 7
+    LowPowerAction = 8
 
     @staticmethod
     def get_string(type_int):
@@ -40,7 +41,7 @@ class AdaptationType:
                 'MigrateAction', 'VerticalScaleAction',
                 'HorizontalScaleAction', 'DeveloperAction',
                 'CombinedAction', 'NoAction', 'StartAction',
-                'StopAction'
+                'StopAction', 'LowPowerAction'
             ]
             return action_types[type_int]
 
@@ -55,43 +56,53 @@ class AdaptationAction:
         """
         Create an adaptation action object based on a supplied int or string
         """
-        if type(adaptation_type) is int:
-            self.adaptation_type = adaptation_type
-        else:
-            try:
-                action_types = [
-                    'migrateaction', 'verticalscaleaction',
-                    'horizontalscaleaction', 'developeraction',
-                    'combinedaction', 'noaction', 'startaction',
-                    'stopaction'
-                ]
+        action_types = [
+            'migrateaction', 'verticalscaleaction',
+            'horizontalscaleaction', 'developeraction',
+            'combinedaction', 'noaction', 'startaction',
+            'stopaction', 'lowpoweraction'
+        ]
+        try:
+            if type(adaptation_type) is int:
+                if adaptation_type < len(action_types) and adaptation_type >= 0:
+                    self.adaptation_type = adaptation_type
+                else:
+                    raise Exception
+            else:
                 normalised_type = str(adaptation_type).lower()
                 self.adaptation_type = action_types.index(normalised_type)
-            except Exception:
-                raise LookupError(
-                    'invalid adaptation type [{}]'.format(adaptation_type)
-                )
+        except Exception:
+            raise LookupError(
+                'invalid adaptation type [{}]'.format(adaptation_type)
+            )
 
         self.target = ""
         self.destination = ""
         self.scale_value = ""
         self.actions = []
         self.score = 0
+        self.votes = 0
+        self.candidate = ''
+
+        self.target_app = ""  # i.e. stack_id for redirecting to another stack
 
     def __eq__(self, other):
         """Check two adaptation actions for equality"""
         try:
             if (
-                self.adaptation_type == other.adaptation_type and
-                self.target == other.target and
-                self.destination == other.destination and
-                self.scale_value == other.scale_value and
-                self.actions == other.actions
+                    self.adaptation_type == other.adaptation_type and
+                    self.target == other.target and
+                    self.destination == other.destination and
+                    self.scale_value == other.scale_value and
+                    self.actions == other.actions and
+					self.votes == other.votes and
+	                self.candidate == other.candidate and
+                    self.target_app == other.target_app
             ):
                 return True
             else:
                 return False
-        except Exception:
+        except AttributeError:
             return False
 
     def __repr__(self):
@@ -99,14 +110,30 @@ class AdaptationAction:
         output = (
             "AdaptationAction(type={type}, target={target}, "
             "destination={destination}, scale_value={scale_value},"
-            " score={score})").format(
+            " score={score}, votes={votes}, candidate={candidate})").format(
                 type=AdaptationType.get_string(self.adaptation_type),
                 target=self.target,
                 destination=self.destination,
                 scale_value=self.scale_value,
-                score=self.score
+                score=self.score,
+                votes=self.votes,
+                candidate=self.candidate
             )
+
         return output
+
+    def __hash__(self):
+        return hash(
+            (
+                self.adaptation_type,
+                self.target,
+                self.destination,
+                self.scale_value,
+                self.votes,
+                self.candidate,
+                self.target_app
+            )
+        )
 
     def to_dict(self):
         """return a json-compatible dictionary representation of the action"""
@@ -115,11 +142,18 @@ class AdaptationAction:
             "target": self.target,
             "destination": self.destination,
             "scale_value": self.scale_value,
-            "score": self.score
+            "score": self.score,
+            "votes": self.votes,
+            "candidate": self.candidate
         }
         return output
 
-    def generate_adaptation_request(self, adaptation_event):
+    @staticmethod
+    def generate_adaptation_request(
+        adaptation_event,
+        name=None,
+        stack_id=None
+    ):
         """
         Return an adaptation-event format json string representing this action
         """
@@ -127,7 +161,7 @@ class AdaptationAction:
             'id': {
                 'user_id': adaptation_event.user_id,
                 'tenant': adaptation_event.tenant_id,
-                'stack_id': adaptation_event.stack_id,
+                'stack_id': stack_id or adaptation_event.stack_id,
                 'source': adaptation_event.source,
                 'instance': uuid.uuid4().hex,
                 'context': 'adaptation request',
@@ -135,7 +169,7 @@ class AdaptationAction:
             },
             'timestamp': time.time(),
             'event': {
-                'name': adaptation_event.name,
+                'name': name or adaptation_event.name,
                 'value': adaptation_event.value,
             },
             'data': adaptation_event.data
