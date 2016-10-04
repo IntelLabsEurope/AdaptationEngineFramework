@@ -1,1 +1,13 @@
 *.pyc
+.vagrant
+_*/
+*.jar
+*.class
+.idea
+.coverage
+*.egg
+*.tar.gz
+*.egg-info/
+venv/
+build/
+.DS_Store

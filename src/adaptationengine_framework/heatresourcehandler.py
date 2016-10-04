@@ -125,10 +125,29 @@ class HeatResourceHandler:
                                         {},
                                     ).get('allowed_actions')
 
+                                    event_plugin_bl = resource_json.get(
+                                        'properties',
+                                        {},
+                                    ).get(
+                                        'plugins',
+                                        {}
+                                    ).get('blacklist')
+
+                                    event_embargo = resource_json.get(
+                                        'properties',
+                                        {},
+                                    ).get('extend_embargo')
+
                                     event_h_scale = resource_json.get(
                                         'properties',
                                         {},
                                     ).get('horizontal_scale_out', None)
+
+                                    if event_h_scale:
+                                        event_embargo = event_h_scale.get(
+                                            'extend_embargo',
+                                            event_embargo
+                                        )
 
                                     actions = []
                                     for action in event_actions:
@@ -144,6 +163,8 @@ class HeatResourceHandler:
                                         'agreement_id': agreement_id,
                                         'event': event_name,
                                         'actions': actions,
+                                        'embargo': event_embargo,
+                                        'blacklist': event_plugin_bl,
                                         'horizontal_scale_out': event_h_scale
                                     }
                                 elif(
@@ -284,6 +305,8 @@ class HeatResourceHandler:
                     'event': heat_msg_data['name'],
                     'agreement_id': agreement_id,
                     'actions': actions,
+                    'embargo': heat_msg_data.get('embargo', 0),
+                    'blacklist': heat_msg_data.get('blacklist', []),
                     'horizontal_scale_out': heat_msg_data.get(
                         'horizontal_scale_out',
                         None
@@ -394,6 +417,8 @@ class HeatResourceHandler:
                         'stack_id': event['stack_id'],
                         'agreement_id': event.get('agreement_id'),
                         'event_name': event['event'],
+                        'embargo': event['embargo'],
+                        'blacklist': event['blacklist'],
                         'actions': json_actions,
                         'horizontal_scale_out': event.get(
                             'horizontal_scale_out',

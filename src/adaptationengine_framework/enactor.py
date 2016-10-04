@@ -39,7 +39,7 @@ class Enactor:
             nova_client,
             adaptation_action,
             retry_wait=10,
-            retries=20
+            retries=40
     ):
         """
         Continually check Nova for physical location of VM until it is
@@ -89,7 +89,7 @@ class Enactor:
             heat_client,
             stack_id,
             retry_wait=10,
-            retries=20
+            retries=40
     ):
         """
         Continually check Heat for status of stack until it is marked
@@ -120,7 +120,7 @@ class Enactor:
             nova_client,
             instance_id,
             retry_wait=5,
-            retries=20
+            retries=40
     ):
         """
         Check Nova for current instance power state and compare to
@@ -139,7 +139,7 @@ class Enactor:
             nova_client,
             instance_id,
             retry_wait=10,
-            retries=20
+            retries=40
     ):
         """
         Check Nova for current instance power state and compare to
@@ -303,22 +303,28 @@ class Enactor:
                 adaptation_action.adaptation_type ==
                 adaptationaction.AdaptationType.MigrateAction
         ):
-            nova_client.servers.live_migrate(
-                adaptation_action.target,
-                adaptation_action.destination,
-                False,
-                False
-            )
-            LOGGER.info(
-                "[ENACTMENT] MigrateAction, {} moves to {}".format(
+            # try migrations twice
+            attempts = 2
+            while attempts > 0:
+                nova_client.servers.live_migrate(
                     adaptation_action.target,
-                    adaptation_action.destination
+                    adaptation_action.destination,
+                    False,
+                    False
                 )
-            )
-            enact_status = Enactor.poll_migrate_complete(
-                nova_client,
-                adaptation_action
-            )
+                LOGGER.info(
+                    "[ENACTMENT] MigrateAction, {} moves to {}".format(
+                        adaptation_action.target,
+                        adaptation_action.destination
+                    )
+                )
+                enact_status = Enactor.poll_migrate_complete(
+                    nova_client,
+                    adaptation_action
+                )
+                attempts -= 1
+                if enact_status:
+                    break
         elif (
                 adaptation_action.adaptation_type ==
                 adaptationaction.AdaptationType.VerticalScaleAction
@@ -510,7 +516,7 @@ class Enactor:
             enact_status = False
 
         # sleep for a while, if extend_embargo is set
-        extend_embargo = heat_resource.get('extend_embargo', 0)
+        extend_embargo = heat_resource.get('embargo', 0)
         if enact_status is True and extend_embargo > 0:
             LOGGER.info(
                 "Stack adaptation embargo extended by {} "

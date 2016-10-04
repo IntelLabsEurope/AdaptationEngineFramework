@@ -69,6 +69,34 @@ class Distributor(threading.Thread):
 
         threading.Thread.__init__(self)
 
+    def remove_blacklisted(self):
+        """
+        make a new plugin rounds 2d list that excludes plugins blacklisted
+        for this event name
+        """
+        blacklist = self._heat_resource.get('blacklist')
+
+        LOGGER.info(
+            "Blacklist for [{}] event is [{}]".format(
+                self._cw_event.name, blacklist
+            )
+        )
+
+        if blacklist:
+            plugin_grouping = []
+            for rnd in self._plugin_rounds:
+                new_round = []
+                for plugin in rnd:
+                    if plugin not in blacklist:
+                        new_round.append(plugin)
+
+                if new_round:
+                    plugin_grouping.append(new_round)
+
+            return plugin_grouping
+        else:
+            return self._plugin_rounds
+
     def run(self):
         """
         Execute the thread. Kick off plugin processes and wait for the results
@@ -78,12 +106,19 @@ class Distributor(threading.Thread):
             LOGGER.info('distributor start')
             LOGGER.info('plugin__grouping is {}'.format(self._plugin_rounds))
 
+            # clear blacklisted plugins
+            plugin_grouping = self.remove_blacklisted()
+            LOGGER.info('clearing blacklisted plugins for this action')
+            LOGGER.info(
+                'plugin__grouping is now {}'.format(plugin_grouping)
+            )
+
             # start them off
             consolidated_results = self._initial_actions
             LOGGER.info(
                 'initial actions: {}'.format(consolidated_results)
             )
-            for rnd_num, rnd in enumerate(self._plugin_rounds):
+            for rnd_num, rnd in enumerate(plugin_grouping):
                 LOGGER.info(
                     "Starting plugin round {} with plugins {}".format(
                         rnd_num,
@@ -124,45 +159,49 @@ class Distributor(threading.Thread):
                         self._round_results
                     )
                 )
-                for plugin_name, plugin_data in self._round_results.items():
-                    database.Database.log_plugin_result(
-                        stack_id=self._cw_event.stack_id,
-                        plugin_name=plugin_name,
-                        plugin_weight=plugin_data.get('weight'),
-                        input_actions=consolidated_results,
-                        output_actions=plugin_data.get('results'),
-                    )
-
-                if plugins == []:
-                    raise Exception("No plugins were retrieved!")
+                if not self._round_results:
+                    consolidated_results = self._initial_actions
+                    LOGGER.info("No results this round, so just passing along previous round's")
                 else:
-                    LOGGER.info('calling consolidator')
-                    current_bl_len = len(self._blacklisted_actions)
-                    (consolidated_results, self._blacklisted_actions) = (
-                        consolidator.Consolidator.consolidate(
-                            self._cw_event,
-                            self._initial_actions,
-                            self._round_results,
-                            self._blacklisted_actions
+                    for plugin_name, plugin_data in self._round_results.items():
+                        database.Database.log_plugin_result(
+                            stack_id=self._cw_event.stack_id,
+                            plugin_name=plugin_name,
+                            plugin_weight=plugin_data.get('weight'),
+                            input_actions=consolidated_results,
+                            output_actions=plugin_data.get('results'),
                         )
-                    )
-                    new_bl_len = len(self._blacklisted_actions)
-                    LOGGER.info(
-                        "Added {} actions to the blacklist".format(
-                            new_bl_len - current_bl_len
+
+                    if plugins == []:
+                        raise Exception("No plugins were retrieved!")
+                    else:
+                        LOGGER.info('calling consolidator')
+                        current_bl_len = len(self._blacklisted_actions)
+                        (consolidated_results, self._blacklisted_actions) = (
+                            consolidator.Consolidator.consolidate(
+                                self._cw_event,
+                                self._initial_actions,
+                                self._round_results,
+                                self._blacklisted_actions
+                            )
                         )
+                        new_bl_len = len(self._blacklisted_actions)
+                        LOGGER.info(
+                            "Added {} actions to the blacklist".format(
+                                new_bl_len - current_bl_len
+                            )
+                        )
+
+                    self._logged_results[rnd_num] = copy.deepcopy(
+                        consolidated_results
                     )
 
-                self._logged_results[rnd_num] = copy.deepcopy(
-                    consolidated_results
-                )
+                    self._round_results = {}
 
-                self._round_results = {}
-
-                if rnd_num < (len(self._plugin_rounds) - 1):
-                    # keep the scores on the last round
-                    for action in consolidated_results:
-                        action.score = 0
+                    if rnd_num < (len(plugin_grouping) - 1):
+                        # keep the scores on the last round
+                        for action in consolidated_results:
+                            action.score = 0
 
         except Exception, err:
             LOGGER.error('Distributor error')

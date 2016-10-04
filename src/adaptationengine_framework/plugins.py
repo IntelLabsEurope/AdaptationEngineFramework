@@ -499,7 +499,10 @@ class JavaPlugin(Plugin):
             LOGGER.warn(
                 "Returning original initial actions becuase of plugin error"
             )
-            self._results[self.plugin_name] = self._initial_actions
+            self._results[self.plugin_name] = {
+                'results': self._initial_actions,
+                'weight': self.weight
+            }
         else:
 
             for action in output_actions:

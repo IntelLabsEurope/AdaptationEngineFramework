@@ -62,6 +62,20 @@ def generic_setup(instance):
     instance.patchers.append(patcher_db)
     instance.mock_db = patcher_db.start()
 
+    # patch output
+    patcher_output = mock.patch(
+        'adaptationengine_framework.heatresourcehandler.output'
+    )
+    instance.patchers.append(patcher_output)
+    instance.mock_output = patcher_output.start()
+
+    # patch adaptationaction
+    patcher_action = mock.patch(
+        'adaptationengine_framework.heatresourcehandler.adaptationaction'
+    )
+    instance.patchers.append(patcher_action)
+    instance.mock_action = patcher_action.start()
+
 
 def generic_teardown(self):
     """Destroy patchers"""
@@ -80,6 +94,268 @@ class TestHeatResourceHandler(unittest.TestCase):
         """Destroy patchers"""
         generic_teardown(self)
 
+    @mock.patch(
+        'adaptationengine_framework.heatresourcehandler.'
+        'HeatResourceHandler._recover_state'
+    )
+    def test__init(self, mock_state):
+        """create the class"""
+        mock_mq_handler = mock.Mock()
+        heatresourcehandler.HeatResourceHandler(mock_mq_handler)
+
+    @mock.patch(
+        'adaptationengine_framework.heatresourcehandler.'
+        'HeatResourceHandler._update_agreement_map'
+    )
+    def test__recover_state(self, mock_update):
+        """test recovering heat templates"""
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_hrh_instance._active_vms = {}
+        mock_hrh_instance._active_resources = {}
+        mock_hrh_instance._agreement_map = {}
+
+        name = mock.PropertyMock(return_value='tenant1')
+        mock.Mock.name = name
+
+        mock_ks = self.mock_ops.OpenStackClients.get_keystone_client()
+        mock_ks.tenants.list.return_value = [mock.Mock()]
+
+        mock_heatc = self.mock_ops.OpenStackClients.get_heat_client
+        mock_heatc.return_value.stacks.list.return_value = [
+            mock.Mock(id='xxx')
+        ]
+
+        resource_json = (
+            {
+                'resources': {
+                    'some_resource': {
+                        'properties': {
+                            'name': 'some_name',
+                            'agreement_id': 'agreement_id',
+                            'allowed_actions': ['action1'],
+                            'horizontal_scale_out': '',
+                        }
+                    }
+                }
+            }
+        )
+
+        self.mock_ops.OpenStackClients.get_heat_client.return_value.stacks.template.return_value = resource_json
+
+        self.mock_ops.OpenStackClients.get_heat_client().resources.list.return_value = [
+            mock.Mock(
+                resource_name='some_resource',
+                resource_type="AdaptationEngine::Heat::AdaptationResponse",
+                physical_resource_id='some_id'
+            ),
+            mock.Mock(
+                resource_name='some_resource2',
+                resource_type="OS::Nova::Server",
+                physical_resource_id='some_vm_id'
+            )
+        ]
+
+        heatresourcehandler.HeatResourceHandler._recover_state(
+            mock_hrh_instance
+        )
+
+        print self.mock_ops.mock_calls
+        print mock_hrh_instance._active_vms
+        print mock_hrh_instance._active_resources
+        print mock_hrh_instance._agreement_map
+        assert False
+
+    @mock.patch(
+        'adaptationengine_framework.heatresourcehandler.'
+        'HeatResourceHandler._update_agreement_map'
+    )
+    def test__recover_state_no_keystone(self, mock_update):
+        """test recovering heat templates but no keystone access"""
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_hrh_instance._active_vms = {}
+        mock_hrh_instance._active_resources = {}
+        mock_hrh_instance._agreement_map = {}
+
+        def no_keystone(*args, **kwargs):
+            raise Exception("ruh roh")
+
+        self.mock_ops.OpenStackClients.get_keystone_client.side_effect = (
+            no_keystone
+        )
+
+        heatresourcehandler.HeatResourceHandler._recover_state(
+            mock_hrh_instance
+        )
+
+    @mock.patch(
+        'adaptationengine_framework.heatresourcehandler.'
+        'HeatResourceHandler._update_agreement_map'
+    )
+    def test__recover_state__tenant_no_heat_client(self, mock_update):
+        """
+        test recovering heat templates but the tenant can't access
+        resources of the stack
+        """
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_hrh_instance._active_vms = {}
+        mock_hrh_instance._active_resources = {}
+        mock_hrh_instance._agreement_map = {}
+
+        name = mock.PropertyMock(return_value='tenant1')
+        mock.Mock.name = name
+
+        mock_ks = self.mock_ops.OpenStackClients.get_keystone_client()
+        mock_ks.tenants.list.return_value = [mock.Mock()]
+
+        def throw_exception(*args, **kwargs):
+            raise Exception
+
+        self.mock_ops.OpenStackClients.get_heat_client.side_effect = (
+            throw_exception
+        )
+
+        heatresourcehandler.HeatResourceHandler._recover_state(
+            mock_hrh_instance
+        )
+
+    @mock.patch(
+        'adaptationengine_framework.heatresourcehandler.'
+        'HeatResourceHandler._update_agreement_map'
+    )
+    def test__recover_state__tenant_no_resource_access(self, mock_update):
+        """
+        test recovering heat templates but the tenant can't access
+        resources of the stack
+        """
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_hrh_instance._active_vms = {}
+        mock_hrh_instance._active_resources = {}
+        mock_hrh_instance._agreement_map = {}
+
+        name = mock.PropertyMock(return_value='tenant1')
+        mock.Mock.name = name
+        mock_ks = self.mock_ops.OpenStackClients.get_keystone_client()
+        mock_ks.tenants.list.return_value = [mock.Mock()]
+
+        mock_heatc = self.mock_ops.OpenStackClients.get_heat_client
+        mock_heatc.return_value.stacks.list.return_value = [
+            mock.Mock(id='xxx')
+        ]
+
+        def throw_exception(*args, **kwargs):
+            raise Exception
+
+        mock_heatc = self.mock_ops.OpenStackClients.get_heat_client()
+        mock_heatc.resources.list.side_effect = throw_exception
+
+        heatresourcehandler.HeatResourceHandler._recover_state(
+            mock_hrh_instance
+        )
+
+    def test__get_initial_actions(self):
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_event_name = '<event-name>'
+        mock_stack_id = '<stack-id>'
+        mock_actions = ['action1']
+
+        mock_hrh_instance._active_resources = {
+            'resource1': {
+                'stack_id': mock_stack_id,
+                'event': mock_event_name,
+                'actions': mock_actions
+            },
+            'notthisone': {
+                'stack_id': '<xxx>',
+                'event': '<yyy>',
+                'actions': mock_actions
+            }
+        }
+
+        results = heatresourcehandler.HeatResourceHandler.get_initial_actions(
+            mock_hrh_instance,
+            mock_event_name,
+            mock_stack_id
+        )
+
+        assert results == mock_actions
+
+    def test__get_initial_actions_no_match(self):
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_event_name = '<event-name>'
+        mock_stack_id = '<stack-id>'
+
+        mock_hrh_instance._active_resources = {
+            'resource1': {
+                'stack_id': '<zzz>',
+                'event': '<kkk>'
+            },
+            'notthisone': {
+                'stack_id': '<xxx>',
+                'event': '<yyy>'
+            }
+        }
+
+        results = heatresourcehandler.HeatResourceHandler.get_initial_actions(
+            mock_hrh_instance,
+            mock_event_name,
+            mock_stack_id
+        )
+
+        assert results is None
+
+    def test__get_resource(self):
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+
+        mock_event_name = '<event-name>'
+        mock_stack_id = '<stack-id>'
+
+        mock_hrh_instance._active_resources = {
+            'resource1': {
+                'stack_id': '<zzz>',
+                'event': '<kkk>'
+            },
+            'thisone': {
+                'stack_id': mock_stack_id,
+                'event': mock_event_name
+            }
+        }
+
+        results = heatresourcehandler.HeatResourceHandler.get_resource(
+            mock_hrh_instance,
+            mock_event_name,
+            mock_stack_id
+        )
+
+        assert results == {
+            'stack_id': mock_stack_id,
+            'event': mock_event_name
+        }
+
+    def test__get_resource_no_match(self):
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+
+        mock_event_name = '<event-name>'
+        mock_stack_id = '<stack-id>'
+
+        mock_hrh_instance._active_resources = {
+            'resource1': {
+                'stack_id': '<zzz>',
+                'event': '<kkk>'
+            },
+            'thisone': {
+                'stack_id': '<no-match>',
+                'event': '<no-match>'
+            }
+        }
+
+        results = heatresourcehandler.HeatResourceHandler.get_resource(
+            mock_hrh_instance,
+            mock_event_name,
+            mock_stack_id
+        )
+
+        assert results is None
+
     def test__get_agreement_map(self):
         _manager = multiprocessing.Manager()
 
@@ -94,3 +370,83 @@ class TestHeatResourceHandler(unittest.TestCase):
 
         assert isinstance(results, dict)
         assert not isinstance(results, multiprocessing.managers.DictProxy)
+
+    def test___update_agreement_map(self):
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_hrh_instance._agreement_map = {}
+
+        mock_event_name = '<event-name>'
+        mock_stack_id = '<stack-id>'
+        mock_agreement_id = '<agreement-id>'
+
+        mock_hrh_instance._active_resources = {
+            'resource1': {
+                'stack_id': mock_stack_id,
+                'event': mock_event_name,
+                'agreement_id': mock_agreement_id
+            },
+            'thisone': {
+                'stack_id': '<no-match>',
+                'event': '<no-match>'
+            }
+        }
+
+        heatresourcehandler.HeatResourceHandler._update_agreement_map(
+            mock_hrh_instance
+        )
+
+        assert mock_hrh_instance._agreement_map == {
+            mock_agreement_id: {
+                'stack_id': mock_stack_id, 'event': mock_event_name
+            }
+        }
+
+    def test__message(self):
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_hrh_instance._agreement_map = {}
+
+        mock_message = (
+            """
+            {
+                "heat": {
+                    "type": "",
+                    "data": {
+                        "resource_id": "",
+                        "name": "",
+                        "stack_id": "",
+                        "agreement_id": "",
+                        "horizontal_scale_out": {},
+                        "actions": [],
+                    },
+                }
+            }
+            """
+        )
+
+    def test__message_bad_message(self):
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_hrh_instance._agreement_map = {}
+
+        mock_message = "zzz"
+
+        try:
+            heatresourcehandler.HeatResourceHandler.message(
+                mock_hrh_instance,
+                mock_message
+            )
+        except Exception:
+            self.fail
+
+    def test__message_short_message(self):
+        mock_hrh_instance = mock.Mock(heatresourcehandler.HeatResourceHandler)
+        mock_hrh_instance._agreement_map = {}
+
+        mock_message = "{}"
+
+        try:
+            heatresourcehandler.HeatResourceHandler.message(
+                mock_hrh_instance,
+                mock_message
+            )
+        except Exception:
+            self.fail

@@ -286,7 +286,7 @@ def main():
     """Do the thing"""
     usage = "usage: %prog"
     description = "Adaptation Engine"
-    version = "%prog 1.0.7"
+    version = "%prog 1.1.0"
 
     output.OUTPUT.info("Initialising...")
 

@@ -71,7 +71,7 @@ class Plugin(threading.Thread):
 
     def __init__(self, name, uuid, initial_actions, event, results, metrics, compute, orchestration):
         output.OUTPUT.info("Plugin", name)
-        
+
         self._name = name
         self._uuid = uuid
         self._initial_actions = initial_actions
