@@ -23,7 +23,7 @@ ez_setup.use_setuptools()
 
 setuptools.setup(
     name="adaptation-engine-framework",
-    version="1.1.0",
+    version="1.1.1",
     description="Adaptation Engine framework",
     author="Intel - Daniel Doyle",
     author_email="danielx.doyle@intel.com",

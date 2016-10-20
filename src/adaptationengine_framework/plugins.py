@@ -510,7 +510,6 @@ class JavaPlugin(Plugin):
                     "Result action from plugin: {}".format(action)
                 )
 
-            self._results[self.plugin_name] = output_actions
             self._results[self.plugin_name] = {
                 'results': output_actions,
                 'weight': self.weight

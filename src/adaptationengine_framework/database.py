@@ -376,6 +376,9 @@ class Database:
                     "java": cfg.plugin_java,
                     "python": cfg.plugin_python,
                     "cpp": cfg.plugin_cpp,
+                    "groupings": cfg.plugin__grouping,
+                    "weightings": cfg.plugin__weightings,
+                    "default_weightings": cfg.plugin__default_weighting,
                 },
                 "openstack": {
                     "keystone": {
